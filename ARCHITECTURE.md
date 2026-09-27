@@ -1,6 +1,6 @@
-# Leafling — Technical Architecture Proposal
+# Leafling — Technical Architecture
 
-Status: **Proposal (revision 2), pending owner approval.** Nothing in this document has been implemented.
+Status: **APPROVED by the owner on 2026-09-27 (revision 3).** Implementation proceeds phase by phase per §22; Phase 0 (platform validation) is the only phase currently authorized.
 Product source of truth: `PRODUCT_SPEC.md`. If this document contradicts it, `PRODUCT_SPEC.md` wins and this document must be corrected.
 Platform research date: 2026-09-27. Limits and prices were checked against official Cloudflare, WebKit and Anthropic documentation on that date and must be re-checked when resources are created.
 
@@ -8,6 +8,8 @@ Legend used for key choices:
 **Recommendation / Reason / Limitations / Security / Cost / Rejected alternative / Why rejected.**
 
 Revision 2 changes (owner feedback): Cloudflare **Free plan** for version 1 with documented, test-based upgrade triggers; **workers.dev** address initially; explicit source-of-truth model (D1 durable, IndexedDB offline copy + pending queue); practical low-cost backups split into essential vs optional; Pl@ntNet moved to future; owner-approved decisions recorded (email one-time code, display-size copies for Timelapse/Compare, no Journal video in v1, icon crop for derivatives); `PRODUCT_SPEC.md` committed to the repository.
+
+Revision 3 changes (owner final corrections, approval): sync conflicts are ordered by **server-assigned revision / server receipt order**, never by device clocks (client timestamps are metadata only), and every overwritten value stays preserved and restorable; version 1 essential backup now includes an **on-demand export of original photos** in manageable yearly/batched downloads; AI models limited to **Sonnet 5 and Haiku 4.5** with a **US$10/month** cap — Opus is not enabled in version 1; all §24 decisions approved.
 
 ---
 
@@ -18,11 +20,11 @@ Leafling is a single-user, Hebrew-first, RTL, iPhone-first PWA for managing pers
 - **One Cloudflare Worker** (with Workers Static Assets) on the **Workers Free plan** serves the built PWA, the JSON API, private photo delivery, the Claude proxy, and one consolidated scheduled job. One deployable, one origin, no CORS.
 - **Initial address: `leafling.<account-subdomain>.workers.dev`.** A custom domain can be added later (§18 describes the move).
 - **Cloudflare Access** (Zero Trust Free) protects the whole origin; the one authorized person signs in with an **email one-time code** (approved). The Worker also verifies the Access JWT.
-- **Source of truth:** **Cloudflare D1 is the durable, synchronized source of truth.** **IndexedDB on the iPhone is the offline local copy and the pending-change queue.** Unsynced changes survive closing the app and authentication expiry; conflicting values are always kept in history, never silently discarded (§10).
+- **Source of truth:** **Cloudflare D1 is the durable, synchronized source of truth.** **IndexedDB on the iPhone is the offline local copy and the pending-change queue.** Unsynced changes survive closing the app and authentication expiry; conflicts are ordered by server revision / receipt order (never device clocks) and overwritten values are always kept and restorable (§10).
 - **Cloudflare R2** (private) stores byte-identical original photos plus display-size and thumbnail copies generated on the iPhone.
 - **Claude API** is called only from the Worker, which builds a minimal, single-plant context from D1. AI can only *propose* changes; every mutation needs explicit confirmation.
 - **Web Push** (Home Screen web apps, iOS 16.4+; Declarative Web Push iOS 18.4+) for important tasks only.
-- **Backups (essential, free):** D1 Time Travel (7 days on Free), a Time Travel bookmark before every production migration, and an on-demand full data export to the iPhone Files app / iCloud Drive with a tested import path. Scheduled duplicate copies and automated restore tests are **optional** later additions (§16).
+- **Backups (essential, free):** D1 Time Travel (7 days on Free), a Time Travel bookmark before every production migration, an on-demand full structured-data export **and an on-demand export of all original photos** (yearly/batched downloads) to the iPhone Files app / iCloud Drive, with tested import paths for both — together a complete independent backup. Scheduled duplicate copies and automated restore tests are **optional** later additions (§16).
 - **GitHub (private) → Cloudflare Workers Builds** for automatic deployments; GitHub Actions for tests.
 
 Workers Paid (US$5/month) is **not** required for version 1. It is adopted only if one of the measurable triggers in §21 is reached.
@@ -165,7 +167,7 @@ Rule: **domain rules live only in `src/shared/domain`** as pure, unit-tested fun
 1. User taps "יבש – השקיתי". UI calls `mutate({type:'soil_check.record', plantId, result:'dry', watered:true})`.
 2. Client writes, in one IndexedDB transaction: the events (`soil_check`, `watering`), the updated plant current state, the recomputed next task (shared domain code), and a queue entry with a client-generated `mutationId` (UUIDv7). The change is now durable on the device.
 3. UI updates instantly. A small indicator shows "נשמר במכשיר" until D1 confirms.
-4. Sync engine sends the queue batch to `POST /api/sync/push`. Worker verifies JWT, validates with Zod, checks the `mutationId` idempotency table, applies all statements in one **D1 `batch()`** (atomic), recomputes tasks with the same shared code, appends to `change_log`, returns the new server sequence.
+4. Sync engine sends the queue batch to `POST /api/sync/push`. Worker verifies JWT, validates with Zod, checks the `mutationId` idempotency table, compares each field's `baseRev` with the server revision (§10), applies all statements in one **D1 `batch()`** (atomic), assigns new server revisions from the `change_log` sequence, recomputes tasks with the same shared code, returns the new server sequence.
 5. Only after D1 acknowledges is the queue entry marked synced; `pull` then retrieves server-side changes.
 
 **B. Adding a journal photo:**
@@ -218,7 +220,7 @@ Rule: **domain rules live only in `src/shared/domain`** as pure, unit-tested fun
 
 ## 7. Data model overview
 
-Exact schema is finalized in Phase 1 migrations; this is the proposed shape. IDs are **UUIDv7** generated on the client (sortable, offline-safe). Tables include `created_at`, `updated_at`, `deleted_at` (soft delete), `owner_id`, and a server `rev`.
+Exact schema is finalized in Phase 1 migrations; this is the approved shape. IDs are **UUIDv7** generated on the client (sortable, offline-safe). Tables include `created_at`, `deleted_at` (soft delete), `owner_id`, a server-assigned `rev` (from the global `change_log` sequence) and per-field server revisions for mutable fields. Client-side `client_updated_at` and `device_id` are stored as **metadata only** and are never used to order or resolve changes.
 
 ### Core entities
 
@@ -234,7 +236,7 @@ Exact schema is finalized in Phase 1 migrations; this is the proposed shape. IDs
 | `plants` | Personal card: species_id, `species_ordinal`, nickname, status (`rooting`/`seedling`/`plant`/`sick` — exactly four), `kind` (`single`/`group`), group counts, current location, current pot, current substrate, key dates with precision, main_photo_id, archived_at |
 | `plant_lineage` | parent_plant_id, child_plant_id, relation (`cutting_of`, `split_from`, `division_of`), occurred_at — explicit only |
 | `plant_events` | Append-only event log (§8) |
-| `photos` | R2 keys (original/display/thumb), sha256, mime, `media_type` (image only in v1), bytes, width/height, captured_at + source (`exif`/`user`/`upload`/`unknown`), upload_state, in_timelapse |
+| `photos` | R2 keys (original/display/thumb), sha256, crc32 (computed on the phone, used for streamed photo export), mime, `media_type` (image only in v1), bytes, width/height, captured_at + source (`exif`/`user`/`upload`/`unknown`), upload_state, in_timelapse |
 | `photo_links` | photo ↔ plant / journal event / health case / location / fertilizer / wishlist — one logical photo, many appearances |
 | `tasks` | plant_id, kind (soil_check, fertilize_window, rooting_check, seedling_step, repot, treatment_step, health_followup, custom_reminder), window start/end, important flag, origin (`rule`/`treatment`/`reminder`/`ai_confirmed`), state, completed_by_event_id |
 | `suggestions` | kind (photo_progress, light_measurement…), dismissed_until — **no due dates, never overdue** |
@@ -247,13 +249,13 @@ Exact schema is finalized in Phase 1 migrations; this is the proposed shape. IDs
 | `ai_conversations`, `ai_messages` | User-visible chat history (user data; exportable, deletable) |
 | `ai_proposals` | request_id, type, payload, rationale, confidence, state, resulting_mutation_id |
 | `ai_requests` | Operational metadata only (§11) |
-| `sync_conflicts` | Every overwritten concurrent value (§10) — never auto-deleted |
+| `sync_conflicts` | Every overwritten value from a concurrent edit (§10): entity, field, overwritten value, winning value, base/server revisions, receipt sequence, device and client-timestamp metadata, resolution state — never auto-deleted |
 | `rejected_mutations` | Mutations the server could not apply, with full original content (§10) |
 | `push_subscriptions` | endpoint, keys, device label, last_success_at, failure_count |
 | `notification_log` | tasks included, sent_at, result |
 | `sync_mutations` | mutation_id (PK), received_at, result — idempotency |
 | `change_log` | seq (autoincrement), table, row_id, op — drives delta pull |
-| `export_runs` | Export timestamps, row counts, checksums (for Settings "מצב גיבוי") |
+| `export_runs` | Data and photo export runs: timestamps, scope (year/batch), row/photo counts, checksums (for Settings "מצב גיבוי") |
 
 ### Rules encoded in the model
 - **Naming:** `species_ordinal` = (highest ordinal ever used for that species) + 1. The first plant has ordinal 1 and is displayed **without** a number; later ones display `#2`, `#3`. `#1` is never shown; ordinals are never reused. Nickname overrides the display name only; identity never changes. Split children receive new ordinals the same way.
@@ -262,7 +264,7 @@ Exact schema is finalized in Phase 1 migrations; this is the proposed shape. IDs
 - **Current state + history:** a change to pot/substrate/location/status writes an event (`from`→`to`) *and* updates the current column in the same atomic batch (e.g., pot 12→17→21 cm preserved).
 - **Search:** SQLite FTS5 over species names; personal-name search runs on the local copy.
 
-### Archive / Delete cascade & retention (open decision #12 — proposal)
+### Archive / Delete cascade & retention (open decision #12 — approved)
 - **Archive:** hides the plant from active lists, Today, tasks and notifications; keeps everything; reversible.
 - **Delete plant:** soft delete into "נמחקו לאחרונה" for **30 days** (restorable), then purge by the cron job: events, tasks, links, AI conversations about that plant, and photos not linked elsewhere are removed from D1 and R2.
 - **Lineage preservation:** if a deleted plant has descendants, a minimal tombstone (species, display name, dates) and the events the descendants inherit are retained.
@@ -361,11 +363,18 @@ Consequences:
 - `GET /api/sync/pull?since=<seq>` — changes since the client's last `change_log` seq, paginated.
 - Initial load and "סנכרון מחדש מהשרת" for recovery.
 
-### Conflict handling — conflict history is never silently discarded
+### Conflict handling — server ordering, conflict history never silently discarded
 Scenario: one user, possibly two devices (iPhone + another browser) or an old queued change arriving late.
-- **Events:** append-only with unique IDs → both kept; no conflict.
-- **Entity fields:** mutations carry `baseRev`. If the server's field changed since `baseRev` and the values differ, the server applies last-writer-wins by client `updated_at` **and writes a `sync_conflicts` row plus a `field_conflict` event** containing both values, both timestamps and devices. The losing value is visible in History and in a small "שינויים שהתנגשו" list, where the user can restore it with one tap. Conflict records are never auto-deleted (only purged with a hard-deleted plant).
-- **Status / treatment end / task completion:** idempotent transitions; completing an already completed task is a no-op, recorded.
+
+**Ordering source:** the **server** decides order. D1 processes mutations one at a time (single writer); each accepted change receives a monotonically increasing server revision from the `change_log` sequence. **Device clocks are never trusted for ordering** — iPhone timestamps (`client_updated_at`) are kept only as metadata for display and diagnostics.
+
+- **Events:** append-only with unique IDs → all kept; no conflict. (An event's `occurred_at` is the user-stated domain time, e.g. "watered yesterday", used for History display and learning — it is not a sync-ordering key.)
+- **Entity fields:** every mutation carries, per changed field, the `baseRev` it was based on.
+  - If the field's current server revision equals `baseRev` → apply normally.
+  - If the field changed on the server after `baseRev` (a concurrent edit) → the change is applied in **server receipt order** (the later-received write becomes current), **and** the server writes a `sync_conflicts` row plus a `field_conflict` event holding the overwritten value, the new value, both revisions, the receipt sequence and device/client-time metadata.
+  - If both values are identical → no conflict is recorded.
+- **Preservation:** every overwritten value is visible in History and in a small "שינויים שהתנגשו" list; the user can restore it with one tap (a restore is itself a normal new change with a new server revision). Conflict records are never auto-deleted (purged only with a hard-deleted plant after the trash period).
+- **Status / treatment end / task completion:** idempotent transitions; a duplicate completion is a recorded no-op.
 - **Delete vs edit:** soft delete wins; the edit is kept on the tombstone and restorable from trash.
 - **Derived data:** recomputed on the server after each push; client optimistic values replaced on pull.
 
@@ -390,8 +399,7 @@ Request timeouts (e.g., 15 s for sync), small batches, per-object photo upload r
 |---|---|---|
 | Botanist, Diagnose, identification, pest ID, "What is this?", recovery check | `claude-sonnet-5` (US$2 / US$10 per M input/output tokens) | Strong vision + reasoning at moderate cost |
 | Image quality pre-check, label extraction, short classification | `claude-haiku-4-5` (US$1 / US$5 per M) | Cheap, fast |
-| Optional user-triggered "בדיקה מעמיקה" | `claude-opus-5` (US$5 / US$25 per M) | Only if owner approves |
-Model IDs are configuration.
+Model IDs are configuration, but the Worker enforces an **allowlist of exactly these two models** in version 1. **Opus is not enabled in version 1** and may be added only after explicit future owner approval.
 
 **Request pipeline:**
 1. Access + JWT verified.
@@ -423,8 +431,8 @@ Proposal types: `create_task`, `create_reminder`, `change_status`, `change_locat
 **Secret handling:** `ANTHROPIC_API_KEY` is a Worker secret (encrypted; never in Git, never returned, never logged). Separate Anthropic workspaces/keys for production and preview, each with its own console spend limit.
 
 **Spending controls (layered):**
-1. Anthropic Console workspace **monthly spend limit** (hard ceiling).
-2. Leafling monthly and daily budgets in D1 (warn at 80 %, stop at 100 %).
+1. Anthropic Console workspace **monthly spend limit** (hard ceiling) — production set to **US$10/month** (approved).
+2. Leafling monthly (US$10) and daily budgets in D1 (warn at 80 %, stop at 100 %).
 3. Per-request caps: `max_tokens`, image count, image size (≤ ~1.15 MP AI copy), context token budget.
 4. Prompt caching of the stable system prompt.
 5. Rate limiting.
@@ -473,7 +481,7 @@ Proposal types: `create_task`, `create_reminder`, `change_status`, `change_locat
 - Dry-down cycles computed from `watering` → subsequent `soil_check: dry`, per season; outliers flagged. When sufficient, shows last watering, typical range, number of cycles (spec §26).
 - Weather may move a check but never concludes watering need (spec §26, §36).
 
-**Confidence conventions (open decision #17 — proposal):**
+**Confidence conventions (open decision #17 — approved):**
 - Four levels, fixed Hebrew labels: **ידוע / גבוה**, **סביר / בינוני**, **אפשרי / נמוך**, **אין מספיק מידע**. No percentages.
 - Text + icon shape, not color alone.
 - Server clamps AI levels: no photo → max `likely` for visual diagnosis; retake requested → max `possible`; personal statistics with n < 3 → `possible`/`insufficient`; identification with close alternatives → never `known`.
@@ -574,33 +582,37 @@ Goal: practical, free, and simple for version 1. Essential recovery is required 
 | E1 | **D1 Time Travel** — automatic point-in-time restore, **7 days on the Free plan** (no setup, no cost) | Bugs, bad migrations, accidental mass changes discovered within a week |
 | E2 | **Pre-migration bookmark** — every production deploy that contains a migration first records the current Time Travel bookmark in the deploy log | One-step rollback of a bad migration |
 | E3 | **On-demand full data export** — Settings → "ייצוא גיבוי": the app downloads all structured data from D1 through small paginated API calls (each within Free-plan limits), assembles one JSON file on the phone and saves it to Files / iCloud Drive. Settings shows the last export date calmly (no nagging, no push) | Loss beyond 7 days, Cloudflare account problems, independent copy owned by the user |
-| E4 | **Tested import** — the same JSON format can be imported (paginated) into an empty D1 database | Full logical restore |
+| E3b | **On-demand original-photo export** — Settings → "ייצוא תמונות מקור": originals exported **by year**, each year split into parts of at most ~500 MB (≈ 100–150 photos). Each part is a store-only (uncompressed) ZIP streamed by the Worker from R2 using the CRC-32 and sizes recorded at upload, so the Worker only pipes bytes (Free-plan CPU friendly). Each ZIP contains the byte-identical originals named `YYYY-MM-DD_<photoId>.<ext>` plus `photos-index.json` (photo → plant, capture date, SHA-256, journal/case links). Saved to Files / iCloud Drive. Settings lists which years/parts were exported and offers "רק תמונות חדשות מאז הייצוא האחרון". Manual only — no schedule, no push | Loss of photos with the Cloudflare account; with E3 forms a **complete independent backup** |
+| E4 | **Tested import** — the same JSON format can be imported (paginated) into an empty D1 database; exported photo ZIPs can be re-imported, verified against SHA-256 from the index | Full logical restore of data and photos |
 | E5 | **Soft delete** — deleted plants, photos, locations stay in a 30-day trash | Accidental deletion in the app |
 | E6 | **R2 durability for photos** — originals are write-once, never overwritten, deleted only after the 30-day trash | Photo loss through the app |
 | E7 | **Restore runbook** tested once on the preview environment with synthetic data before real data is entered | Untested procedures |
 
-**Export format:** documented JSON (per-table arrays + manifest with schema version, row counts, SHA-256) — readable without Leafling. Photos are not included in the data export (size); the export contains each photo's ID, capture date and R2 key.
+**Export format:** documented JSON (per-table arrays + manifest with schema version, row counts, SHA-256) — readable without Leafling. Photos are exported separately (E3b) as standard ZIP files of unchanged originals with an index, openable on any device. A **complete independent backup = latest data export (E3) + all photo export parts (E3b)**; Settings shows whether both are up to date.
+
+**Download mechanism:** the iPhone download of a large ZIP from the installed PWA (and the fallback of share-sheet "Save to Files" in smaller batches) is validated in Phase 0; part size is tuned from those results.
 
 **Restore procedures (runbooks):**
 - *Undo recent damage (≤ 7 days):* `wrangler d1 time-travel restore` to a timestamp or the pre-migration bookmark — run from Cloudflare Workers Builds/CI or the dashboard; no personal computer required.
 - *Full logical restore:* create an empty D1 database, apply migrations to the export's schema version, import the JSON file from the app, verify counts/checksums, switch binding, deploy.
+- *Photo restore:* import the photo ZIP parts; each original is re-uploaded unchanged to R2 and verified against its SHA-256; display/thumb copies are regenerated on the phone.
 - *Client recovery:* "סנכרון מחדש מהשרת" (after pushing pending changes).
 - *Bad deploy:* instant rollback to the previous Worker version.
 - *Lost phone:* data is in D1/R2; revoke Access sessions.
 
-**Targets (v1):** RPO — seconds for synced data within 7 days (Time Travel); beyond that, the date of the last user export. RTO ≤ 1 hour.
+**Targets (v1):** RPO — seconds for synced data within 7 days (Time Travel); beyond that, the date of the last user data/photo export. RTO ≤ 1 hour for data; photo restore time depends on the number of parts.
 
 ### Optional advanced backup automation (not required for version 1)
 Added only if the owner wants them and they remain free and simple:
 | # | Option | Cost / complexity |
 |---|---|---|
 | O1 | Scheduled logical backup to a private R2 bucket (weekly or nightly), produced by a scheduled GitHub Actions job running `wrangler d1 export` and uploading to R2 (data passes through the runner's memory only; needs a narrowly scoped Cloudflare API token as a GitHub secret) — or by the Worker cron if Free-plan CPU allows | Free within quotas; adds a token and a workflow |
-| O2 | Photo originals export by year (ZIP parts or share-sheet batches) to Files/iCloud | Free; heavy on phone storage |
 | O3 | Photo mirror to a second R2 bucket | Storage cost beyond 10 GB free; more subrequests |
 | O4 | Automated restore verification (monthly import into a scratch database) | Free but more moving parts |
 | O5 | 30-day Time Travel | Requires Workers Paid (US$5/month) |
 
-- **Rejected:** mandatory nightly duplicate copies and monthly automated restore tests in v1. **Why:** owner direction; E1–E7 give practical recovery at no cost and with little code.
+- **Rejected:** mandatory nightly duplicate copies and monthly automated restore tests in v1. **Why:** owner direction; E1–E7 (including E3b) give practical, complete recovery at no cost and with little code.
+- **Rejected:** data-only export as the independent backup. **Why:** a structured-data export without photos is not a complete independent backup (owner direction).
 - **Rejected:** storing backups in the Git repository or CI artifacts. **Why:** personal data in source control/CI storage.
 
 ---
@@ -655,9 +667,9 @@ No data migration is needed because D1 and R2 are the source of truth.
 |---|---|---|
 | Domain unit tests | Vitest | Naming (#2/#3, never #1, no reuse), soil-check state machine (only "yes" creates watering), dry-down learning & weighting, pattern threshold (≥ 3), confidence clamping, fertilizer windows, groups (split/thin/partial success, inherited history), lineage, cascade/retention, treatment conflicts, suggestions never overdue, status never auto-changed |
 | Schema/contract | Vitest + Zod | Event payload versions, mutations, AI outputs, export format |
-| Worker integration | `@cloudflare/vitest-pool-workers` | Sync idempotency, atomic batches, **conflict records always written**, rejected mutations retained, JWT rejection, R2 checksum mismatch, overwrite refusal, budget/rate-limit stops |
+| Worker integration | `@cloudflare/vitest-pool-workers` | Sync idempotency, atomic batches, **server-revision ordering (skewed/incorrect client clocks never change the outcome)**, **conflict records always written and restorable**, rejected mutations retained, JWT rejection, R2 checksum mismatch, overwrite refusal, budget/rate-limit stops |
 | Free-plan budget tests | Worker integration + preview measurements | CPU time and D1 query count per endpoint (sync batch, pull page, AI with images, push digest, export page, purge) stay under Free limits with margin |
-| Migrations | Vitest | Apply all to empty DB; upgrade from each previous snapshot; export → import round-trip equality |
+| Migrations | Vitest | Apply all to empty DB; upgrade from each previous snapshot; data export → import round-trip equality; photo ZIP export → import byte equality (SHA-256) |
 | AI | Mocked Anthropic client | **Context isolation**, context size budget, proposals never auto-applied, malformed output, confidence clamps. Small manual evaluation set run on demand (not CI) |
 | Offline/sync | Vitest + fake-indexeddb; Playwright network toggling | Offline writes survive reload/app close; queue drains; **auth-expiry flow keeps the queue**; resync never wipes pending changes |
 | E2E | Playwright WebKit, iPhone viewport, `he-IL` | Critical flows per phase, RTL snapshots, exactly 5 tabs, floating + with exactly 2 actions |
@@ -671,7 +683,7 @@ No data migration is needed because D1 and R2 are the source of truth.
 
 - **Workers Logs** with structured JSON (request id, route, status, latency, error code, CPU-limit errors) — no bodies or personal content.
 - **Client errors:** sanitized (message, stack, route, version) sent to `/api/client-errors`, kept 30 days in D1. No third-party error tracker.
-- **Health panel in Settings:** last sync, pending changes, pending photo uploads, unresolved conflicts / rejected changes, last data export, push status, AI budget used this month, device storage used.
+- **Health panel in Settings:** last sync, pending changes, pending photo uploads, unresolved conflicts / rejected changes, last data export, last photo export, push status, AI budget used this month, device storage used.
 - **Cron results** recorded in D1; failures shown as an in-app banner (no push).
 - **Error UX:** every network/AI action has loading, failure and retry states in calm Hebrew; no silent failures, no guilt wording.
 - **Free-plan limit watch:** logs and Cloudflare dashboard metrics are reviewed against the §21 triggers.
@@ -737,9 +749,9 @@ When a trigger is hit: record the evidence in `PROJECT_STATE.md`, ask the owner,
 - Botanist question with context (~4k input incl. cached prompt, ~700 output): ≈ US$0.015.
 - Diagnose with 3 images (~4.5k image tokens + ~4k context, ~1.2k output) + Haiku pre-check: ≈ US$0.03–0.04.
 - Moderate use (~10 AI requests/day, a third with images): ≈ US$5–10/month. Light use: ≈ US$1–3.
-- Recommended hard cap: **US$10/month** (owner decision), enforced by the Anthropic console limit and Leafling's budget counter.
+- Approved hard cap: **US$10/month**, enforced by the Anthropic console limit and Leafling's budget counter.
 
-**Expected total for version 1: US$0 infrastructure + Claude usage (≈ US$1–10/month, capped).** Possible later: Workers Paid US$5/month (only via T1–T6), custom domain ≈ US$10–15/year.
+**Expected total for version 1: US$0 infrastructure + Claude usage (≈ US$1–10/month, capped at US$10).** Possible later: Workers Paid US$5/month (only via T1–T6), custom domain ≈ US$10–15/year.
 
 ---
 
@@ -754,7 +766,8 @@ Dependency-aware; each phase ends with a complete, tested vertical slice on the 
 - Web Push from a Worker to the installed PWA (standard + Declarative Web Push).
 - Photo picker: camera vs gallery, HEIC/JPEG, EXIF date availability, copy generation speed.
 - IndexedDB persistence (`storage.persist()`), queue survival after closing the app.
-- **Free-plan CPU measurements:** AI request with 1–4 images, push encryption, sync batch sizes, export page size (inputs to T1/T2).
+- **Free-plan CPU measurements:** AI request with 1–4 images, push encryption, sync batch sizes, export page size, streamed photo-ZIP export (inputs to T1/T2).
+- **Photo export download:** large ZIP download from the installed PWA to Files/iCloud Drive; share-sheet fallback.
 - Light-meter feasibility (camera relative-brightness experiment).
 Exit: findings appended to ARCHITECTURE.md; any failed spike escalated to the owner.
 
@@ -762,7 +775,7 @@ Exit: findings appended to ARCHITECTURE.md; any failed spike escalated to the ow
 Commit the original icon unchanged to `assets/brand/`; generate approved icon derivatives (crop to inner tile). Repo scaffold; Worker + static assets on workers.dev; Access + JWT; D1 first migrations (profile, species, plants, events, photos, locations, tasks, sync/conflict tables, change log); R2 bucket; CI; preview + production; app shell with RTL tokens, light/warm-dark themes, exact 5-tab navigation and floating + (its two entries lead to real screens only once built — no fake data); PWA manifest + icons. **Essential recovery E1, E2, E5 active and restore runbook drafted before any real data.**
 
 **Phase 2 — Core domain, sync and first vertical slice: "My Plants"**
-Local copy + pending-change queue + sync + conflict records; minimal species catalog; naming rule; locations; add-plant flow (photo/skip, status, nickname, location, status questions, "+ פרטים נוספים"); My Plants tabs/search/filter/sort; plant card header; edit/archive/delete with trash; History tab; photo pipeline (originals, copies, private delivery, gallery, fullscreen, set main, delete); onboarding (skippable) + Settings basics; **data export (E3) and import (E4), restore drill on preview (E7)**. Real data entry begins only after this phase.
+Local copy + pending-change queue + sync + conflict records; minimal species catalog; naming rule; locations; add-plant flow (photo/skip, status, nickname, location, status questions, "+ פרטים נוספים"); My Plants tabs/search/filter/sort; plant card header; edit/archive/delete with trash; History tab; photo pipeline (originals, copies, private delivery, gallery, fullscreen, set main, delete); onboarding (skippable) + Settings basics; **data export (E3), original-photo export (E3b) and import (E4), restore drill on preview (E7)**. Real data entry begins only after this phase.
 
 **Phase 3 — Today, soil-check watering, care plan and Journal**
 Tasks from shared domain; soil-check flow; dry-down learning v1 with confidence; Care Plan; complete/postpone; "לא דורשים טיפול היום — N צמחים"; custom reminders; empty states; Journal (notes, photos, milestones), photo suggestions, Compare and Timelapse (display copies).
@@ -789,7 +802,7 @@ Fertilizer windows, My Fertilizers (label read, manufacturer authoritative), Fer
 Watering Assistant, Pot Size, Sowing, Propagation, Repotting Guide (optional root-ball AI), Pest Identification, "מה זה הדבר הזה?", Soil Mix Builder.
 
 **Phase 11 — Hardening**
-Large-dataset performance, Free-plan limit review (T1–T6), full restore drill, accessibility pass, security review, copy/tone review, real-device regression. Optional backup automation (O1–O4) only if the owner requests it.
+Large-dataset performance, Free-plan limit review (T1–T6), full restore drill, accessibility pass, security review, copy/tone review, real-device regression. Optional backup automation (O1, O3, O4) only if the owner requests it.
 
 ---
 
@@ -803,7 +816,9 @@ Large-dataset performance, Free-plan limit review (T1–T6), full restore drill,
 | iOS evicts local storage / user deletes the Home Screen app with unsynced data | Low / High | `storage.persist()`; aggressive sync; visible pending count; D1 source of truth |
 | No background sync on iOS | Certain / Low | Sync on open/foreground/online |
 | Only 7 days of Time Travel on Free | Certain / Medium | Pre-migration bookmarks; user export E3; trigger T6 |
-| User rarely exports → older recovery point | Medium / Medium | Last-export date visible in Settings (calm, no push); optional O1 |
+| User rarely exports → older recovery point | Medium / Medium | Last data/photo export dates visible in Settings (calm, no push); incremental "new photos only" export; optional O1 |
+| Incorrect iPhone clock | Medium / Low | Server revisions / receipt order decide; client time is metadata only |
+| Large ZIP download fails in the installed PWA | Medium / Medium | Phase 0 test; smaller parts; share-sheet fallback |
 | Origin change (workers.dev → custom domain) | Planned / Low | §18 runbook; D1 is source of truth |
 | AI-hallucinated care or toxicity info | Medium / High | Provenance; unverified marker; cited pet safety; explicit uncertainty; no auto-mutation |
 | Claude cost overrun | Low / Medium | Console limit + app budget + rate limit + caps |
@@ -820,34 +835,39 @@ Large-dataset performance, Free-plan limit review (T1–T6), full restore drill,
 
 ## 24. Decisions
 
-### Approved by the owner (recorded 2026-09-27)
-1. Cloudflare **Free plan** for version 1; Workers Paid only on a measured trigger (§21 T1–T6).
-2. **workers.dev** address initially; custom domain later (§18 runbook).
-3. Source-of-truth model: D1 durable source of truth; IndexedDB offline copy + pending queue; unsynced changes survive app close and auth expiry; conflict history never silently discarded (§10).
-4. Practical low-cost backups: essential recovery E1–E7 in v1; nightly duplicates and automated restore tests are optional (§16).
-5. **Pl@ntNet not in version 1** (future optional integration).
-6. **Email one-time-code** authentication for the initial Cloudflare Access test.
-7. Timelapse and Compare use **uncropped display-size copies** of the originals.
-8. **Journal video excluded** from version 1.
-9. **Icon:** derived iPhone/PWA icons crop to the inner cream tile of the supplied icon (no redesign, no redrawing); the original supplied image is preserved unchanged.
-10. `PRODUCT_SPEC.md` committed to the repository before implementation.
+All decisions below are **approved by the owner (2026-09-27)**. Changes require a new owner decision recorded here.
 
-### Still pending owner approval (recommendation in brackets)
-1. **Frontend stack** (open decision #1) [React + Vite + TypeScript SPA, Tailwind logical utilities, Radix, Dexie, Workbox].
-2. **Code architecture** (#2) [single Worker with static assets + Hono API + one cron; shared pure domain module; local-first client].
-3. **Cloudflare services** (#3) [Workers (not Pages), D1, R2, Access — on Free].
-4. **Data schema** (#5) [event log + current state, §7–8; naming ordinals: first plant unnumbered, then #2/#3, never reused].
-5. **Sync details** (#6) [full structured-data sync; field-level last-writer-wins with every overwritten value kept in `sync_conflicts` and History, restorable].
-6. **Backup specifics** (#7) [E1–E7 as defined; export assembled on the phone; photos excluded from the data export; failures shown in-app only].
-7. **Notifications** (#8) [daily digest by default, separate push only for urgent treatment steps; user-chosen time and quiet hours].
-8. **Light Meter** (#9) [no numeric lux from the camera; guided questionnaire → light category, manual lux entry, optional clearly-approximate camera indicator; final after Phase 0].
-9. **Plant data & provenance** (#10) [own D1 catalog; GBIF/WFO/Wikidata names; AI-drafted care marked unverified; pet safety verified only with a cited source].
-10. **Weather** (#11) [Open-Meteo, non-commercial terms].
-11. **Archive/Delete** (#12) [archive reversible; 30-day trash then purge; lineage tombstones].
-12. **Manual drag sorting** (#14) [not in v1].
-13. **Claude strategy** (#15) [Sonnet 5 primary, Haiku 4.5 for cheap steps, optional Opus escalation, image caps, **US$10/month AI budget cap**].
-14. **Confidence conventions** (#17) [four Hebrew text levels, no percentages, server-side clamping].
-15. **Export/year summary** (#18) and **statistics screen** (#19) [remain out of scope; only the backup-grade export is built].
+### Approved — architecture review
+1. Cloudflare **Free plan** for version 1; Workers Paid only on a measured trigger (§21 T1–T6). No paid resources without owner approval.
+2. **workers.dev** address initially; custom domain later (§18 runbook).
+3. Source-of-truth model: D1 durable source of truth; IndexedDB offline copy + pending queue; unsynced changes survive app close and auth expiry (§10).
+4. **Conflict ordering:** `baseRev` + server-assigned revision / server receipt order; device clocks never authoritative (metadata only); every overwritten value preserved and restorable (§10).
+5. Practical low-cost backups: essential recovery E1–E7 in v1, **including on-demand original-photo export (E3b)**; scheduled duplicates and automated restore tests optional (§16).
+6. **Pl@ntNet not in version 1** (future optional integration).
+7. **Email one-time-code** authentication via Cloudflare Access.
+8. Timelapse and Compare use **uncropped display-size copies** of the originals.
+9. **Journal video excluded** from version 1.
+10. **Icon:** derived iPhone/PWA icons crop to the inner cream tile of the supplied icon (no redesign); the original is preserved unchanged.
+11. `PRODUCT_SPEC.md` committed to the repository.
+12. **Frontend stack** (open decision #1): React + Vite + TypeScript SPA, Tailwind logical utilities, Radix, Dexie, Workbox.
+13. **Code architecture** (#2): single Worker with static assets + Hono API + one cron; shared pure domain module; local-first client.
+14. **Cloudflare services** (#3): Workers (not Pages), D1, R2, Access — on Free.
+15. **Data schema** (#5): event log + current state (§7–8); naming ordinals — first plant unnumbered, then #2/#3, never reused.
+16. **Sync** (#6): full structured-data sync; field-level server-ordered resolution with recorded, restorable conflicts.
+17. **Backup specifics** (#7): E1–E7 as defined; failures shown in-app only.
+18. **Notifications** (#8): daily digest by default, separate push only for urgent treatment steps; user-chosen time and quiet hours.
+19. **Light Meter** (#9): no numeric lux from the camera; guided questionnaire → light category, manual lux entry, optional clearly-approximate camera indicator; final form after Phase 0.
+20. **Plant data & provenance** (#10): own D1 catalog; GBIF/WFO/Wikidata names; AI-drafted care marked unverified; pet safety verified only with a cited source.
+21. **Weather** (#11): Open-Meteo (non-commercial terms).
+22. **Archive/Delete** (#12): archive reversible; 30-day trash then purge; lineage tombstones.
+23. **Manual drag sorting** (#14): not in v1.
+24. **Claude strategy** (#15): **Sonnet 5 and Haiku 4.5 only**, image caps, **US$10/month budget cap** (Anthropic console limit + in-app budget). **Opus not enabled in version 1** without explicit future approval.
+25. **Confidence conventions** (#17): four Hebrew text levels, no percentages, server-side clamping.
+26. **Export/year summary** (#18) and **statistics screen** (#19): out of scope; only backup-grade exports (E3, E3b) are built.
+
+### Open items to be settled during implementation (not architecture changes)
+- Production method for provisioning the Web Push VAPID key pair as a Worker secret without the key passing through chat, Git or source files — decided with Phase 0 findings before Phase 4.
+- Phase 0 findings may refine: photo-export part size and download mechanism, AI image caps, sync batch sizes, Light Meter form.
 
 ### PWA / iPhone icon requirements (for implementation)
 Original preserved unchanged as `assets/brand/leafling-icon-original.jpg` (supplied 1254×1254 JPEG). Approved derivation: crop to the inner cream tile (removing the outer background, tile edge and drop shadow), then scale with enough margin that the plant and the "Leafling" wordmark are not clipped by the iOS rounded mask. Derivatives are PNG with an **opaque** cream background (iOS renders transparency as black):
@@ -863,4 +883,4 @@ Original preserved unchanged as `assets/brand/leafling-icon-original.jpg` (suppl
 Checks: preview at 180 px (60 pt) and Spotlight size (40 pt); the wordmark must stay legible at 180 px and nothing may touch the mask corners. Manifest: `name: "Leafling"`, `short_name: "Leafling"`, `display: "standalone"`, `lang: "he"`, `dir: "rtl"`, `start_url: "/today"`, `scope: "/"`, `theme_color` / `background_color` from the cream/green tokens.
 
 ---
-*End of architecture proposal (revision 2). Implementation must not begin until the owner explicitly approves this document.*
+*End of architecture (revision 3, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*

@@ -7,11 +7,12 @@
 Leafling is a personal, single-user, iPhone-first, Hebrew RTL Progressive Web App for managing and growing plants: personal plant collection with long-term per-plant memory, visual journal and technical history, soil-check-based watering, fertilizing, seedlings and propagation (with groups and lineage), locations and light, diagnosis and treatment tracking, a general plant database, a Wishlist, ten core grow tools, and an AI Botanist powered by the Claude API through a secure server-side layer. General species knowledge is the starting point; the plant's own history gains weight over time. AI never changes data without explicit user confirmation.
 
 ## Current phase
-Architecture review
+Phase 0 — Platform validation (preparation). Architecture review: **completed** (2026-09-27).
 
 ## Source-of-truth files
 - `PRODUCT_SPEC.md` — product requirements; the source of truth, wins on any conflict. Committed to the repository unchanged, as supplied by the owner.
-- `ARCHITECTURE.md` — technical architecture proposal, revision 2 (pending approval).
+- `ARCHITECTURE.md` — technical architecture, revision 3 — **approved** 2026-09-27.
+- `docs/phase0/PHASE0_TEST_PLAN.md` — Phase 0 test plan.
 - `PROJECT_STATE.md` — this status file.
 - Approved Leafling app icon (supplied product asset; must not be redesigned or replaced): square 1254×1254 JPEG supplied by the owner in the architecture-phase conversation — variegated pothos in a smiling speckled cream pot with the "Leafling" wordmark on a cream rounded tile. Not yet in the repository; to be committed unchanged as `assets/brand/leafling-icon-original.jpg` at the start of Phase 1. Optimized derivatives are created only during implementation, using the approved crop to the inner cream tile; formats, sizes and clipping checks are in `ARCHITECTURE.md` §24.
 
@@ -42,52 +43,45 @@ Architecture review
 - Out of scope: social, feed, news, courses, ads, Plant of the Day, QR, harvest log, aggressive gamification, Photos tab, standalone Weather tool, AI image editing.
 - Data export / year summary is a future nice-to-have; a general statistics screen is out of scope.
 
-Owner decisions recorded during architecture review (details in `ARCHITECTURE.md` §24):
+Owner decisions recorded during architecture review (all approved; full list in `ARCHITECTURE.md` §24):
 - Cloudflare Free plan for version 1; Workers Paid only after a measured, documented trigger (§21 T1–T6).
 - workers.dev address initially; custom domain later.
-- D1 is the durable synchronized source of truth; IndexedDB is the offline copy and pending-change queue; unsynced changes survive app close and authentication expiry; conflict history is never silently discarded.
-- Practical low-cost backups: essential recovery in v1; nightly duplicates and automated restore tests optional.
+- D1 is the durable synchronized source of truth; IndexedDB is the offline copy and pending-change queue; unsynced changes survive app close and authentication expiry.
+- Sync conflicts ordered by `baseRev` + server-assigned revision / server receipt order; device clocks are metadata only; every overwritten value preserved and restorable.
+- Practical low-cost backups: essential recovery in v1 including on-demand structured-data export **and** on-demand original-photo export (yearly/batched ZIPs to Files/iCloud Drive); scheduled duplicates and automated restore tests optional.
 - Pl@ntNet not in version 1 (future optional integration).
 - Email one-time-code authentication for the initial Cloudflare Access test.
 - Timelapse and Compare use uncropped display-size copies.
 - Journal video excluded from version 1.
 - Derived iPhone icons use the approved crop; the original icon is preserved unchanged.
 - `PRODUCT_SPEC.md` committed to the repository before implementation.
+- Claude: Sonnet 5 and Haiku 4.5 only, US$10/month budget cap; Opus not enabled in version 1 without explicit future approval.
+- All remaining recommendations in `ARCHITECTURE.md` §24 (frontend stack, code architecture, services, schema, sync, backup specifics, notifications, Light Meter, plant data provenance, Open-Meteo, archive/delete, no manual drag sorting in v1, confidence conventions, export/statistics out of scope).
 
 ## Files created during this phase
 - `ARCHITECTURE.md`
 - `PROJECT_STATE.md`
 - `PRODUCT_SPEC.md` (committed unchanged from the owner-supplied file; not authored in this phase)
+- `docs/phase0/PHASE0_TEST_PLAN.md` (Phase 0 preparation)
 
 ## Architecture status
-Pending approval (revision 2)
+Approved (revision 3, 2026-09-27). Architecture-review phase completed.
 
 ## Implementation status
-Not started
+Phase 0 started (preparation only): test plan written. No spike code, no application code, no dependencies yet. Waiting for owner Stage A account actions and confirmation. Phase 1 not started.
 
 ## Cloudflare resources
-Not created
+Not created. Planned for Phase 0 (created by the owner in the dashboard, Free plan only): Worker `leafling-preview`, D1 `leafling-preview`, R2 bucket `leafling-preview-photos`, Access protection on the preview workers.dev URL.
 
 ## API secrets
-Not configured
+Not configured. Planned for Phase 0: `ANTHROPIC_API_KEY` (preview workspace, US$5 limit) entered by the owner directly as an encrypted Cloudflare Worker secret. Never in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
-(Details and recommendations in `ARCHITECTURE.md` §24.)
-1. Frontend stack: React + Vite + TypeScript SPA, Tailwind (logical utilities), Radix, Dexie, Workbox.
-2. Code architecture: single Cloudflare Worker (static assets + API + one cron), shared domain module, local-first client.
-3. Cloudflare services: Workers (not Pages), D1, R2, Access — on the Free plan.
-4. Data schema: event log + current state; naming ordinal rules.
-5. Sync details: field-level last-writer-wins with every overwritten value kept and restorable.
-6. Backup specifics: essential recovery E1–E7 (Time Travel 7 days, pre-migration bookmarks, on-phone data export and import, 30-day trash, restore drill).
-7. Notifications: daily digest by default, quiet hours.
-8. Light Meter approach: no fake lux; questionnaire + manual lux + optional approximate camera indicator.
-9. Plant data source and provenance policy.
-10. Weather provider: Open-Meteo.
-11. Archive/Delete cascade and 30-day trash retention.
-12. Manual drag sorting: not in v1.
-13. Claude models, image caps and monthly AI budget cap (recommended US$10).
-14. Confidence display conventions.
-15. Export/year summary and statistics screen remain out of scope.
+None for the architecture. Open implementation items (ARCHITECTURE.md §24):
+- Production provisioning method for the Web Push VAPID key pair (decide before Phase 4).
+- Phase 0 findings may refine photo-export part size, AI image caps, sync batch sizes and the Light Meter form.
+
+Pending owner actions: Phase 0 Stage A account setup in Cloudflare and Anthropic (see chat instructions / `docs/phase0/PHASE0_TEST_PLAN.md`), then confirmation.
 
 ## Next recommended step
-Owner reviews `ARCHITECTURE.md` (revision 2), answers the pending decisions, and explicitly approves it. Then begin Phase 0 (platform validation spikes on a real iPhone and Free-plan CPU measurements) before any application implementation.
+Owner completes Phase 0 Stage A account actions and confirms, providing the non-secret identifiers (workers.dev subdomain, Zero Trust team name, D1 database ID). Then: write the throwaway spike in `spikes/phase0/`, owner connects the repository in Workers Builds and enters the preview Anthropic key as a Worker secret (Stage B), and run the Phase 0 tests on the iPhone.
