@@ -11,7 +11,7 @@ Phase 0 — Platform validation (preparation). Architecture review: **completed*
 
 ## Source-of-truth files
 - `PRODUCT_SPEC.md` — product requirements; the source of truth, wins on any conflict. Committed to the repository unchanged, as supplied by the owner.
-- `ARCHITECTURE.md` — technical architecture, revision 3 — **approved** 2026-09-27.
+- `ARCHITECTURE.md` — technical architecture, revision 3.1 — **approved** 2026-09-27.
 - `docs/phase0/PHASE0_TEST_PLAN.md` — Phase 0 test plan.
 - `PROJECT_STATE.md` — this status file.
 - Approved Leafling app icon (supplied product asset; must not be redesigned or replaced): square 1254×1254 JPEG supplied by the owner in the architecture-phase conversation — variegated pothos in a smiling speckled cream pot with the "Leafling" wordmark on a cream rounded tile. Not yet in the repository; to be committed unchanged as `assets/brand/leafling-icon-original.jpg` at the start of Phase 1. Optimized derivatives are created only during implementation, using the approved crop to the inner cream tile; formats, sizes and clipping checks are in `ARCHITECTURE.md` §24.
@@ -55,6 +55,8 @@ Owner decisions recorded during architecture review (all approved; full list in 
 - Journal video excluded from version 1.
 - Derived iPhone icons use the approved crop; the original icon is preserved unchanged.
 - `PRODUCT_SPEC.md` committed to the repository before implementation.
+- VAPID private key only as the encrypted Worker secret `VAPID_PRIVATE_KEY` — never in D1 or any storage, including Phase 0; generated in the owner's browser.
+- Photo ZIP export (175 MB / 500 MB) is a Phase 0 feasibility test with a stop rule, not an approved implementation.
 - Claude: Sonnet 5 and Haiku 4.5 only, US$10/month budget cap; Opus not enabled in version 1 without explicit future approval.
 - All remaining recommendations in `ARCHITECTURE.md` §24 (frontend stack, code architecture, services, schema, sync, backup specifics, notifications, Light Meter, plant data provenance, Open-Meteo, archive/delete, no manual drag sorting in v1, confidence conventions, export/statistics out of scope).
 
@@ -65,7 +67,7 @@ Owner decisions recorded during architecture review (all approved; full list in 
 - `docs/phase0/PHASE0_TEST_PLAN.md` (Phase 0 preparation)
 
 ## Architecture status
-Approved (revision 3, 2026-09-27). Architecture-review phase completed.
+Approved (revision 3.1, 2026-09-27; includes the VAPID and photo-export security/feasibility corrections). Architecture-review phase completed.
 
 ## Implementation status
 Phase 0 started (preparation only): test plan written. No spike code, no application code, no dependencies yet. Waiting for owner Stage A account actions and confirmation. Phase 1 not started.
@@ -74,12 +76,12 @@ Phase 0 started (preparation only): test plan written. No spike code, no applica
 Not created. Planned for Phase 0 (created by the owner in the dashboard, Free plan only): Worker `leafling-preview`, D1 `leafling-preview`, R2 bucket `leafling-preview-photos`, Access protection on the preview workers.dev URL.
 
 ## API secrets
-Not configured. Planned for Phase 0: `ANTHROPIC_API_KEY` (preview workspace, US$5 limit) entered by the owner directly as an encrypted Cloudflare Worker secret. Never in Git, source files, chat or frontend code.
+Not configured. Planned for Phase 0, both entered by the owner directly as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` (preview workspace, US$5 limit) and `VAPID_PRIVATE_KEY` (generated in the owner's browser; never stored in D1). Public key `VAPID_PUBLIC_KEY` as a plain variable. Never in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
 None for the architecture. Open implementation items (ARCHITECTURE.md §24):
-- Production provisioning method for the Web Push VAPID key pair (decide before Phase 4).
-- Phase 0 findings may refine photo-export part size, AI image caps, sync batch sizes and the Light Meter form.
+- Photo export mechanism and part size — decided only after the Phase 0 feasibility test (stop rule; alternatives go to the owner).
+- Phase 0 findings may refine AI image caps, sync batch sizes and the Light Meter form.
 
 Pending owner actions: Phase 0 Stage A account setup in Cloudflare and Anthropic (see chat instructions / `docs/phase0/PHASE0_TEST_PLAN.md`), then confirmation.
 

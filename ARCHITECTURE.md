@@ -1,6 +1,6 @@
 # Leafling — Technical Architecture
 
-Status: **APPROVED by the owner on 2026-09-27 (revision 3).** Implementation proceeds phase by phase per §22; Phase 0 (platform validation) is the only phase currently authorized.
+Status: **APPROVED by the owner on 2026-09-27 (revision 3.1).** Implementation proceeds phase by phase per §22; Phase 0 (platform validation) is the only phase currently authorized.
 Product source of truth: `PRODUCT_SPEC.md`. If this document contradicts it, `PRODUCT_SPEC.md` wins and this document must be corrected.
 Platform research date: 2026-09-27. Limits and prices were checked against official Cloudflare, WebKit and Anthropic documentation on that date and must be re-checked when resources are created.
 
@@ -10,6 +10,8 @@ Legend used for key choices:
 Revision 2 changes (owner feedback): Cloudflare **Free plan** for version 1 with documented, test-based upgrade triggers; **workers.dev** address initially; explicit source-of-truth model (D1 durable, IndexedDB offline copy + pending queue); practical low-cost backups split into essential vs optional; Pl@ntNet moved to future; owner-approved decisions recorded (email one-time code, display-size copies for Timelapse/Compare, no Journal video in v1, icon crop for derivatives); `PRODUCT_SPEC.md` committed to the repository.
 
 Revision 3 changes (owner final corrections, approval): sync conflicts are ordered by **server-assigned revision / server receipt order**, never by device clocks (client timestamps are metadata only), and every overwritten value stays preserved and restorable; version 1 essential backup now includes an **on-demand export of original photos** in manageable yearly/batched downloads; AI models limited to **Sonnet 5 and Haiku 4.5** with a **US$10/month** cap — Opus is not enabled in version 1; all §24 decisions approved.
+
+Revision 3.1 (owner security correction, 2026-09-27): the **VAPID private key is never stored in D1** or any database — in every environment, including Phase 0 — only as the encrypted Worker secret `VAPID_PRIVATE_KEY`; the photo ZIP export (E3b) is an **unproven mechanism subject to a Phase 0 feasibility test** with an explicit stop rule.
 
 ---
 
@@ -500,7 +502,7 @@ Proposal types: `create_task`, `create_reminder`, `change_status`, `change_locat
 | Secret | Used by |
 |---|---|
 | `ANTHROPIC_API_KEY` | AI proxy |
-| `VAPID_PRIVATE_KEY` (public key is non-secret config) | Web Push |
+| `VAPID_PRIVATE_KEY` (public key `VAPID_PUBLIC_KEY` is non-secret configuration and may also be stored in D1) | Web Push |
 Non-secret config in `wrangler.jsonc`: Access team domain, AUD tag, owner email, model IDs, budgets.
 Local development uses `.dev.vars` (gitignored) with mock values. GitHub holds **no** Cloudflare token when Workers Builds deploys.
 
@@ -514,6 +516,12 @@ Local development uses `.dev.vars` (gitignored) with mock values. GitHub holds *
 - GitHub secret scanning; dependency update bot; committed lockfile.
 - Logs contain no bodies, photo bytes or AI content.
 - Runbooks: Anthropic key rotation, VAPID rotation (requires re-subscribe), Access session revocation.
+
+**VAPID key provisioning (all environments, including Phase 0):**
+- The VAPID private key is **never** stored in D1, R2, KV, logs, Git, source files, chat or frontend code — only as the encrypted Worker secret `VAPID_PRIVATE_KEY`. Only the public key is stored as configuration (`VAPID_PUBLIC_KEY` plain variable) and, if convenient, in D1.
+- Generation: an Access-protected, one-time **key-generation page** served by the Worker generates a P-256 key pair **inside the owner's browser** with WebCrypto (`crypto.subtle.generateKey`). The page makes no network requests (CSP `connect-src 'none'`), never sends or stores the private key, and shows it once with a copy button. The owner pastes it straight into Cloudflare dashboard → Worker → Variables and Secrets → type **Secret** → `VAPID_PRIVATE_KEY`, pastes the public key as plain variable `VAPID_PUBLIC_KEY`, then clears the clipboard and closes the page. The page refuses to run once `VAPID_PUBLIC_KEY` is configured.
+- Rotation repeats the procedure; existing push subscriptions must then re-subscribe.
+- Rejected: Worker self-generating and storing the key in D1 (secret at rest in the database — owner rejected). Rejected: GitHub Actions generating it and calling `wrangler secret put` (requires a Cloudflare API token stored in GitHub).
 
 **Privacy:** single private system; no analytics, ads or tracking (spec §50); self-hosted fonts; weather uses city-level coordinates rounded to ~0.1°; plant-name lookups send only species names; Claude receives only minimal single-plant context and EXIF-stripped images.
 
@@ -537,7 +545,7 @@ Local development uses `.dev.vars` (gitignored) with mock values. GitHub holds *
 - **Payload:** minimal text (optionally generic) and a deep link (`/today` or `/plant/:id`).
 - **Tap** opens the right screen; badge shows open important tasks.
 - **Fallback:** Today is always the source of truth. Settings shows push status per device and "שלחי התראת בדיקה".
-- **Security:** VAPID private key is a Worker secret; payloads are encrypted end-to-end to the device.
+- **Security:** VAPID private key exists only as the encrypted Worker secret `VAPID_PRIVATE_KEY` (never in D1 or any storage; provisioning in §13); payloads are encrypted end-to-end to the device.
 - **Cost:** free.
 - **Rejected:** third-party push providers. **Why:** extra accounts, tracking SDKs, data sharing.
 - **Rejected:** email/SMS reminders. **Why:** out of product tone; extra services.
@@ -582,7 +590,7 @@ Goal: practical, free, and simple for version 1. Essential recovery is required 
 | E1 | **D1 Time Travel** — automatic point-in-time restore, **7 days on the Free plan** (no setup, no cost) | Bugs, bad migrations, accidental mass changes discovered within a week |
 | E2 | **Pre-migration bookmark** — every production deploy that contains a migration first records the current Time Travel bookmark in the deploy log | One-step rollback of a bad migration |
 | E3 | **On-demand full data export** — Settings → "ייצוא גיבוי": the app downloads all structured data from D1 through small paginated API calls (each within Free-plan limits), assembles one JSON file on the phone and saves it to Files / iCloud Drive. Settings shows the last export date calmly (no nagging, no push) | Loss beyond 7 days, Cloudflare account problems, independent copy owned by the user |
-| E3b | **On-demand original-photo export** — Settings → "ייצוא תמונות מקור": originals exported **by year**, each year split into parts of at most ~500 MB (≈ 100–150 photos). Each part is a store-only (uncompressed) ZIP streamed by the Worker from R2 using the CRC-32 and sizes recorded at upload, so the Worker only pipes bytes (Free-plan CPU friendly). Each ZIP contains the byte-identical originals named `YYYY-MM-DD_<photoId>.<ext>` plus `photos-index.json` (photo → plant, capture date, SHA-256, journal/case links). Saved to Files / iCloud Drive. Settings lists which years/parts were exported and offers "רק תמונות חדשות מאז הייצוא האחרון". Manual only — no schedule, no push | Loss of photos with the Cloudflare account; with E3 forms a **complete independent backup** |
+| E3b | **On-demand original-photo export** — Settings → "ייצוא תמונות מקור": originals exported **by year**, each year split into parts. **Proposed mechanism, not yet approved for implementation — subject to the Phase 0 feasibility test (P0-7):** each part is a store-only (uncompressed) ZIP streamed by the Worker from R2, using the CRC-32 and sizes recorded at upload so the Worker does not hash photo bytes. This reduces but does **not** eliminate Worker CPU (ZIP headers, stream piping per chunk), and each R2 read may count toward the per-invocation subrequest limit (50 on Free), which may cap the number of photos per part. Part size (bytes and photo count) is set only from measured results. Each ZIP contains the byte-identical originals named `YYYY-MM-DD_<photoId>.<ext>` plus `photos-index.json` (photo → plant, capture date, SHA-256, journal/case links). Saved to Files / iCloud Drive. Settings lists which years/parts were exported and offers "רק תמונות חדשות מאז הייצוא האחרון". Manual only — no schedule, no push | Loss of photos with the Cloudflare account; with E3 forms a **complete independent backup** |
 | E4 | **Tested import** — the same JSON format can be imported (paginated) into an empty D1 database; exported photo ZIPs can be re-imported, verified against SHA-256 from the index | Full logical restore of data and photos |
 | E5 | **Soft delete** — deleted plants, photos, locations stay in a 30-day trash | Accidental deletion in the app |
 | E6 | **R2 durability for photos** — originals are write-once, never overwritten, deleted only after the 30-day trash | Photo loss through the app |
@@ -590,7 +598,7 @@ Goal: practical, free, and simple for version 1. Essential recovery is required 
 
 **Export format:** documented JSON (per-table arrays + manifest with schema version, row counts, SHA-256) — readable without Leafling. Photos are exported separately (E3b) as standard ZIP files of unchanged originals with an index, openable on any device. A **complete independent backup = latest data export (E3) + all photo export parts (E3b)**; Settings shows whether both are up to date.
 
-**Download mechanism:** the iPhone download of a large ZIP from the installed PWA (and the fallback of share-sheet "Save to Files" in smaller batches) is validated in Phase 0; part size is tuned from those results.
+**Feasibility gate for E3b (Phase 0, P0-7):** 175 MB and 500 MB parts are **test points only**. Measured: Worker CPU time, Worker memory, subrequest count, wall time, iPhone memory behavior, download reliability (including interrupted connections) and saving to Files / iCloud Drive. **Stop rule:** if streamed ZIP generation cannot stay safely within Free-plan limits (p95 CPU < 7 ms, no CPU-limit or memory errors, subrequests < 50 with margin) or downloads/saving are unreliable, the work stops and the owner receives a proposal before any architecture change — candidate free alternatives: smaller parts (e.g., ≤ 25–40 photos / ≤ 100 MB), per-photo downloads saved via the iOS share sheet ("Save to Files") in small batches without ZIP, or ZIP assembly on the iPhone in small batches. The requirement itself (a complete, manual, independent export of original photos to Files/iCloud Drive) is fixed; only the mechanism may change.
 
 **Restore procedures (runbooks):**
 - *Undo recent damage (≤ 7 days):* `wrangler d1 time-travel restore` to a timestamp or the pre-migration bookmark — run from Cloudflare Workers Builds/CI or the dashboard; no personal computer required.
@@ -766,8 +774,9 @@ Dependency-aware; each phase ends with a complete, tested vertical slice on the 
 - Web Push from a Worker to the installed PWA (standard + Declarative Web Push).
 - Photo picker: camera vs gallery, HEIC/JPEG, EXIF date availability, copy generation speed.
 - IndexedDB persistence (`storage.persist()`), queue survival after closing the app.
-- **Free-plan CPU measurements:** AI request with 1–4 images, push encryption, sync batch sizes, export page size, streamed photo-ZIP export (inputs to T1/T2).
-- **Photo export download:** large ZIP download from the installed PWA to Files/iCloud Drive; share-sheet fallback.
+- **Free-plan CPU measurements:** AI request with 1–4 images, push encryption, sync batch sizes, export page size (inputs to T1/T2).
+- **Photo export feasibility (E3b):** streamed ZIP at 175 MB and 500 MB test points — Worker CPU, memory, subrequests; iPhone memory behavior; download reliability; saving to Files/iCloud Drive; stop rule in §16.
+- **VAPID provisioning:** browser-side key generation page; private key entered only as the encrypted Worker secret.
 - Light-meter feasibility (camera relative-brightness experiment).
 Exit: findings appended to ARCHITECTURE.md; any failed spike escalated to the owner.
 
@@ -818,7 +827,8 @@ Large-dataset performance, Free-plan limit review (T1–T6), full restore drill,
 | Only 7 days of Time Travel on Free | Certain / Medium | Pre-migration bookmarks; user export E3; trigger T6 |
 | User rarely exports → older recovery point | Medium / Medium | Last data/photo export dates visible in Settings (calm, no push); incremental "new photos only" export; optional O1 |
 | Incorrect iPhone clock | Medium / Low | Server revisions / receipt order decide; client time is metadata only |
-| Large ZIP download fails in the installed PWA | Medium / Medium | Phase 0 test; smaller parts; share-sheet fallback |
+| Streamed photo ZIP exceeds Free limits or large downloads fail in the installed PWA | Medium / Medium | Phase 0 feasibility test with stop rule (§16); smaller parts; share-sheet or on-phone batch alternatives proposed to owner |
+| VAPID private key exposure | Low / Medium | Worker secret only; browser-side generation; never stored in any database |
 | Origin change (workers.dev → custom domain) | Planned / Low | §18 runbook; D1 is source of truth |
 | AI-hallucinated care or toxicity info | Medium / High | Provenance; unverified marker; cited pet safety; explicit uncertainty; no auto-mutation |
 | Claude cost overrun | Low / Medium | Console limit + app budget + rate limit + caps |
@@ -864,10 +874,11 @@ All decisions below are **approved by the owner (2026-09-27)**. Changes require 
 24. **Claude strategy** (#15): **Sonnet 5 and Haiku 4.5 only**, image caps, **US$10/month budget cap** (Anthropic console limit + in-app budget). **Opus not enabled in version 1** without explicit future approval.
 25. **Confidence conventions** (#17): four Hebrew text levels, no percentages, server-side clamping.
 26. **Export/year summary** (#18) and **statistics screen** (#19): out of scope; only backup-grade exports (E3, E3b) are built.
+27. **VAPID private key** stored only as the encrypted Worker secret `VAPID_PRIVATE_KEY`, never in D1 or any storage, in every environment including Phase 0; generated in the owner's browser by an Access-protected page (§13).
 
 ### Open items to be settled during implementation (not architecture changes)
-- Production method for provisioning the Web Push VAPID key pair as a Worker secret without the key passing through chat, Git or source files — decided with Phase 0 findings before Phase 4.
-- Phase 0 findings may refine: photo-export part size and download mechanism, AI image caps, sync batch sizes, Light Meter form.
+- **Photo export mechanism (E3b):** final mechanism and part size decided only after the Phase 0 feasibility test; if the streamed ZIP fails the stop rule, a free alternative is proposed to the owner for approval.
+- Phase 0 findings may refine: AI image caps, sync batch sizes, Light Meter form.
 
 ### PWA / iPhone icon requirements (for implementation)
 Original preserved unchanged as `assets/brand/leafling-icon-original.jpg` (supplied 1254×1254 JPEG). Approved derivation: crop to the inner cream tile (removing the outer background, tile edge and drop shadow), then scale with enough margin that the plant and the "Leafling" wordmark are not clipped by the iOS rounded mask. Derivatives are PNG with an **opaque** cream background (iOS renders transparency as black):
@@ -883,4 +894,4 @@ Original preserved unchanged as `assets/brand/leafling-icon-original.jpg` (suppl
 Checks: preview at 180 px (60 pt) and Spotlight size (40 pt); the wordmark must stay legible at 180 px and nothing may touch the mask corners. Manifest: `name: "Leafling"`, `short_name: "Leafling"`, `display: "standalone"`, `lang: "he"`, `dir: "rtl"`, `start_url: "/today"`, `scope: "/"`, `theme_color` / `background_color` from the cream/green tokens.
 
 ---
-*End of architecture (revision 3, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*
+*End of architecture (revision 3.1, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*
