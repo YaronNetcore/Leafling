@@ -1,0 +1,21 @@
+{
+  "name": "leafling-phase0-spike",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Throwaway Phase 0 platform-validation spike for Leafling. Not application code.",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --local --var DEV_AUTH_BYPASS:true",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts",
+    "deploy": "wrangler deploy"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "0.128.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "5.20260927.1",
+    "typescript": "5.9.3",
+    "wrangler": "4.141.0"
+  }
+}

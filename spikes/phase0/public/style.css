@@ -1,0 +1,22 @@
+:root { --bg: #FBF7EE; --card: #fff; --text: #2d3a26; --muted: #6b7563; --green: #5B7F4A; --line: #e3dccb; }
+@media (prefers-color-scheme: dark) { :root { --bg: #1f1d19; --card: #2a2721; --text: #efe9dc; --muted: #b3ab9a; --green: #8fb07a; --line: #3b372f; } }
+* { box-sizing: border-box; }
+body { margin: 0; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--text);
+  padding: env(safe-area-inset-top) 16px calc(env(safe-area-inset-bottom) + 24px); font-size: 16px; }
+header { position: sticky; top: 0; background: var(--bg); padding: 12px 0; z-index: 1; border-bottom: 1px solid var(--line); }
+h1 { font-size: 20px; margin: 0; } h2 { font-size: 17px; margin: 0 0 8px; }
+section { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px; margin: 14px 0; }
+.muted { color: var(--muted); font-size: 14px; margin: 4px 0; }
+.status { font-size: 14px; margin-top: 6px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0; }
+button, .button, .filebtn { font: inherit; min-height: 44px; padding: 8px 14px; border-radius: 12px; border: 1px solid var(--green);
+  background: transparent; color: var(--green); text-decoration: none; display: inline-flex; align-items: center; cursor: pointer; }
+button.primary, .button.primary { background: var(--green); color: #fff; }
+button:disabled { opacity: .5; }
+input, select, textarea { font: inherit; font-size: 16px; padding: 8px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); max-width: 100%; }
+textarea { width: 100%; }
+label { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+pre { direction: ltr; text-align: left; white-space: pre-wrap; word-break: break-word; font-size: 12px; background: var(--bg); padding: 8px; border-radius: 8px; max-height: 320px; overflow: auto; }
+pre:empty { display: none; }
+video { width: 100%; border-radius: 12px; }
+.conflict { border-top: 1px solid var(--line); padding: 8px 0; font-size: 14px; }

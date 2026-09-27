@@ -7,7 +7,7 @@
 Leafling is a personal, single-user, iPhone-first, Hebrew RTL Progressive Web App for managing and growing plants: personal plant collection with long-term per-plant memory, visual journal and technical history, soil-check-based watering, fertilizing, seedlings and propagation (with groups and lineage), locations and light, diagnosis and treatment tracking, a general plant database, a Wishlist, ten core grow tools, and an AI Botanist powered by the Claude API through a secure server-side layer. General species knowledge is the starting point; the plant's own history gains weight over time. AI never changes data without explicit user confirmation.
 
 ## Current phase
-Phase 0 — Platform validation (preparation). Architecture review: **completed** (2026-09-27).
+Phase 0 — Platform validation. Spike code written and verified locally; waiting for owner Stage B setup. Architecture review: **completed** (2026-09-27).
 
 ## Source-of-truth files
 - `PRODUCT_SPEC.md` — product requirements; the source of truth, wins on any conflict. Committed to the repository unchanged, as supplied by the owner.
@@ -65,25 +65,32 @@ Owner decisions recorded during architecture review (all approved; full list in 
 - `PROJECT_STATE.md`
 - `PRODUCT_SPEC.md` (committed unchanged from the owner-supplied file; not authored in this phase)
 - `docs/phase0/PHASE0_TEST_PLAN.md` (Phase 0 preparation)
+- `spikes/phase0/` — throwaway Phase 0 spike (Worker, iPhone test page, tests, README); removed at the end of Phase 0
 
 ## Architecture status
 Approved (revision 3.1, 2026-09-27; includes the VAPID and photo-export security/feasibility corrections). Architecture-review phase completed.
 
 ## Implementation status
-Phase 0 started (preparation only): test plan written. No spike code, no application code, no dependencies yet. Waiting for owner Stage A account actions and confirmation. Phase 1 not started.
+Phase 0 in progress. Throwaway spike in `spikes/phase0/` written and verified locally (typecheck, unit tests incl. RFC 8291 vector, local end-to-end and browser offline/auth-expiry simulation). Not yet deployed; no test has run on Cloudflare or the iPhone yet. No application code. Phase 1 not started. Test device: iPhone 17 Pro, iOS 27.0.
 
 ## Cloudflare resources
-Not created. Planned for Phase 0 (created by the owner in the dashboard, Free plan only): Worker `leafling-preview`, D1 `leafling-preview`, R2 bucket `leafling-preview-photos`, Access protection on the preview workers.dev URL.
+Free plan only; billing alerts configured; no API tokens created by the owner. Created by the owner in Stage A (2026-09-27):
+- workers.dev subdomain: `nisimy.workers.dev`
+- Zero Trust team: `nisimy` (One-time PIN enabled)
+- D1: `leafling-preview` (ID `be736b5f-a420-4797-8145-f710c02db8b1`)
+- R2: `leafling-preview-photos` (public access disabled)
+Not yet created: Worker `leafling-preview` (created by Workers Builds in Stage B) and its Access application. No production resources.
 
 ## API secrets
-Not configured. Planned for Phase 0, both entered by the owner directly as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` (preview workspace, US$5 limit) and `VAPID_PRIVATE_KEY` (generated in the owner's browser; never stored in D1). Public key `VAPID_PUBLIC_KEY` as a plain variable. Never in Git, source files, chat or frontend code.
+None configured yet. Anthropic workspace `Leafling Preview` exists (US$5 prepaid, US$5 monthly limit, alerts at US$1/US$4, auto-reload off); no API key created yet.
+Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` and `VAPID_PRIVATE_KEY` (generated in the owner's browser via `/keygen`; never stored in D1 or anywhere else). Plain variables: `OWNER_EMAIL`, `ACCESS_AUD`, `VAPID_PUBLIC_KEY`. Nothing secret in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
 None for the architecture. Open implementation items (ARCHITECTURE.md §24):
 - Photo export mechanism and part size — decided only after the Phase 0 feasibility test (stop rule; alternatives go to the owner).
 - Phase 0 findings may refine AI image caps, sync batch sizes and the Light Meter form.
 
-Pending owner actions: Phase 0 Stage A account setup in Cloudflare and Anthropic (see chat instructions / `docs/phase0/PHASE0_TEST_PLAN.md`), then confirmation.
+Pending owner actions: Phase 0 Stage B setup (Workers Builds connection, Access application, variables, VAPID key via `/keygen`, Anthropic key as Worker secret), then confirmation. Stage A: completed 2026-09-27.
 
 ## Next recommended step
-Owner completes Phase 0 Stage A account actions and confirms, providing the non-secret identifiers (workers.dev subdomain, Zero Trust team name, D1 database ID). Then: write the throwaway spike in `spikes/phase0/`, owner connects the repository in Workers Builds and enters the preview Anthropic key as a Worker secret (Stage B), and run the Phase 0 tests on the iPhone.
+Owner completes Stage B and confirms that `/api/whoami` shows all configuration flags as true. Then run the Phase 0 tests on the iPhone per `docs/phase0/PHASE0_TEST_PLAN.md`, record results, and review findings before Phase 1.

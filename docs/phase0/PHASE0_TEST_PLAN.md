@@ -1,7 +1,18 @@
 # Leafling — Phase 0 Test Plan (Platform Validation)
 
-Status: **Preparation. Waiting for owner account actions (Stage A) before any Cloudflare resource is used.**
+Status: **Spike code written and verified locally (2026-09-27). Waiting for owner Stage B setup (Workers Builds, Access, variables, secrets) before any test runs on Cloudflare or the iPhone.**
 Authority: `ARCHITECTURE.md` (approved, revision 3.1) §22 Phase 0. Product source of truth: `PRODUCT_SPEC.md`.
+
+## Environment (confirmed by owner, Stage A)
+- Cloudflare account on the **Free** plan; billing alerts configured; no API tokens created by the owner.
+- workers.dev subdomain `nisimy.workers.dev` → spike URL `https://leafling-preview.nisimy.workers.dev`.
+- Zero Trust team `nisimy` (`nisimy.cloudflareaccess.com`), One-time PIN enabled.
+- D1 `leafling-preview` (ID `be736b5f-a420-4797-8145-f710c02db8b1`); R2 `leafling-preview-photos` (public access disabled).
+- Anthropic workspace `Leafling Preview`: US$5 prepaid, US$5 monthly limit, alerts at US$1/US$4, auto-reload off. Spike's own AI budget: US$2.
+- Test device: iPhone 17 Pro, iOS 27.0.
+
+## Spike code
+`spikes/phase0/` (see its README). Local verification done without any Cloudflare resource: typecheck; unit tests incl. the RFC 8291 Appendix A Web Push encryption vector and VAPID ES256 signature; local end-to-end run (sync idempotency, server-ordered conflict with a wrong client clock, conflict restore, R2 checksum rejection, write-once originals, byte-identical download, streamed ZIP passes `unzip -t` with matching SHA-256, Opus rejected, fail-closed auth on a non-local host, keygen page CSP); browser simulation of Access expiry (401) + reload + offline with 40 queued changes all preserved and drained after re-sign-in.
 
 ## Purpose
 Prove, on the owner's real iPhone and on the Cloudflare **Free** plan, the platform assumptions the architecture depends on — before Phase 1 foundation work. Phase 0 builds no product screens.

@@ -1,0 +1,35 @@
+// Leafling Phase 0 spike — PREVIEW ONLY. Throwaway platform-validation code.
+// No secrets in this file. Secrets (ANTHROPIC_API_KEY, VAPID_PRIVATE_KEY) are set only as
+// encrypted Worker secrets in the Cloudflare dashboard. OWNER_EMAIL, ACCESS_AUD and
+// VAPID_PUBLIC_KEY are plain dashboard variables preserved by keep_vars.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "leafling-preview",
+  "main": "src/worker.ts",
+  "compatibility_date": "2026-09-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "keep_vars": true,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS",
+    "run_worker_first": ["/api/*", "/keygen", "/keygen.js"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "leafling-preview",
+      "database_id": "be736b5f-a420-4797-8145-f710c02db8b1"
+    }
+  ],
+  "r2_buckets": [
+    { "binding": "PHOTOS", "bucket_name": "leafling-preview-photos" }
+  ],
+  "vars": {
+    "ACCESS_TEAM_DOMAIN": "nisimy.cloudflareaccess.com",
+    "AI_BUDGET_USD": "2",
+    "SPIKE_PHASE": "0"
+  }
+}

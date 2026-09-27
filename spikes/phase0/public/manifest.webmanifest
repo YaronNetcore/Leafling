@@ -1,0 +1,15 @@
+{
+  "name": "Leafling Phase 0",
+  "short_name": "Leafling P0",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "lang": "he",
+  "dir": "rtl",
+  "background_color": "#FBF7EE",
+  "theme_color": "#5B7F4A",
+  "icons": [
+    { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
