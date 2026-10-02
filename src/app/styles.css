@@ -1,0 +1,173 @@
+@import "tailwindcss";
+@import "@fontsource-variable/rubik";
+
+/* Leafling design tokens — warm cream + natural botanical greens (see docs/design/DESIGN_SYSTEM.md).
+   All layout uses logical properties (start/end) for true RTL. */
+:root {
+  --bg: #f6efe2;
+  --bg-soft: #fbf6ec;
+  --surface: #fffcf5;
+  --surface-2: #f3ecdd;
+  --sage: #e5ead3;
+  --sage-strong: #d6dfbf;
+  --line: #ebe2cf;
+  --green: #3d6534;
+  --green-press: #335a2c;
+  --green-soft: #6c8f55;
+  --leaf: #8bab6a;
+  --ink: #26351f;
+  --text: #3a3f33;
+  --muted: #7a7768;
+  --on-green: #fffaf0;
+  --water: #4a9ac4;
+  --water-bg: #e2eef3;
+  --sun: #e7a93a;
+  --sun-bg: #fbefd4;
+  --soil: #b07a45;
+  --soil-bg: #f5e6d3;
+  --heat: #d65a4a;
+  --heat-bg: #f8e1dc;
+  --ok: #4f8a3c;
+  --attention: #d9a420;
+  --problem: #df7a34;
+  --urgent: #c8453a;
+  --shadow: 0 1px 2px rgb(92 70 30 / 0.06), 0 8px 24px rgb(92 70 30 / 0.08);
+  --shadow-lg: 0 2px 6px rgb(92 70 30 / 0.08), 0 18px 40px rgb(92 70 30 / 0.12);
+  --hero-fade: linear-gradient(to top, rgb(246 239 226 / 1), rgb(246 239 226 / 0));
+  color-scheme: light;
+}
+:root.dark {
+  --bg: #171a14;
+  --bg-soft: #1c2018;
+  --surface: #23281e;
+  --surface-2: #2a3024;
+  --sage: #2e3826;
+  --sage-strong: #39462f;
+  --line: #343b2c;
+  --green: #8fbf72;
+  --green-press: #7dad61;
+  --green-soft: #a8c98f;
+  --leaf: #9cbd7c;
+  --ink: #eef0e2;
+  --text: #dcdccd;
+  --muted: #a3a391;
+  --on-green: #13200f;
+  --water: #79bde0;
+  --water-bg: #1e3039;
+  --sun: #f0bd5a;
+  --sun-bg: #3a3020;
+  --soil: #d29a62;
+  --soil-bg: #3a2c1f;
+  --heat: #ec8576;
+  --heat-bg: #3d2420;
+  --ok: #8fbf72;
+  --attention: #e8bf4c;
+  --problem: #ef9a5a;
+  --urgent: #ec7468;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px rgb(0 0 0 / 0.25);
+  --shadow-lg: 0 2px 6px rgb(0 0 0 / 0.35), 0 18px 40px rgb(0 0 0 / 0.35);
+  --hero-fade: linear-gradient(to top, rgb(23 26 20 / 1), rgb(23 26 20 / 0));
+  color-scheme: dark;
+}
+
+@theme inline {
+  --font-sans: "Rubik Variable", system-ui, -apple-system, sans-serif;
+  --color-bg: var(--bg);
+  --color-bg-soft: var(--bg-soft);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-sage: var(--sage);
+  --color-sage-strong: var(--sage-strong);
+  --color-line: var(--line);
+  --color-green: var(--green);
+  --color-green-press: var(--green-press);
+  --color-green-soft: var(--green-soft);
+  --color-leaf: var(--leaf);
+  --color-ink: var(--ink);
+  --color-text: var(--text);
+  --color-muted: var(--muted);
+  --color-on-green: var(--on-green);
+  --color-water: var(--water);
+  --color-water-bg: var(--water-bg);
+  --color-sun: var(--sun);
+  --color-sun-bg: var(--sun-bg);
+  --color-soil: var(--soil);
+  --color-soil-bg: var(--soil-bg);
+  --color-heat: var(--heat);
+  --color-heat-bg: var(--heat-bg);
+  --color-ok: var(--ok);
+  --color-attention: var(--attention);
+  --color-problem: var(--problem);
+  --color-urgent: var(--urgent);
+  --shadow-soft: var(--shadow);
+  --shadow-lift: var(--shadow-lg);
+  --radius-card: 1.5rem;
+}
+
+html, body, #root { min-height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  background-image: radial-gradient(120% 60% at 100% 0%, rgb(255 255 255 / 0.55), transparent 60%);
+  color: var(--text);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+}
+:root.dark body { background-image: radial-gradient(120% 60% at 100% 0%, rgb(143 191 114 / 0.06), transparent 60%); }
+
+/* Scientific names and Latin values stay LTR inside RTL text */
+.ltr { direction: ltr; unicode-bidi: isolate; display: inline-block; }
+.sci { direction: ltr; unicode-bidi: isolate; font-style: italic; }
+
+.safe-top { padding-top: max(env(safe-area-inset-top), 0.75rem); }
+.safe-bottom { padding-bottom: env(safe-area-inset-bottom); }
+.pb-nav { padding-bottom: calc(env(safe-area-inset-bottom) + 10rem); }
+
+.no-scrollbar { scrollbar-width: none; }
+.no-scrollbar::-webkit-scrollbar { display: none; }
+
+.pressable { transition: transform 120ms ease, background-color 160ms ease, box-shadow 160ms ease, opacity 160ms ease; }
+.pressable:active { transform: scale(0.97); }
+:focus-visible { outline: 3px solid color-mix(in srgb, var(--green) 55%, transparent); outline-offset: 2px; border-radius: 12px; }
+
+input, select, textarea { font: inherit; font-size: 16px; }
+
+@keyframes rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+.rise { animation: rise 280ms ease both; }
+@keyframes sprout { 0% { transform: scale(0.6) rotate(-8deg); opacity: 0; } 60% { transform: scale(1.12) rotate(3deg); opacity: 1; } 100% { transform: scale(1) rotate(0); } }
+.celebrate { animation: sprout 700ms cubic-bezier(.2,.9,.3,1.2) both; }
+@keyframes sheet-in { from { transform: translateY(100%); } to { transform: none; } }
+.sheet-in { animation: sheet-in 260ms cubic-bezier(.2,.8,.2,1) both; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+.fade-in { animation: fade-in 200ms ease both; }
+@keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+.skeleton { background: linear-gradient(90deg, var(--surface-2) 25%, var(--sage) 50%, var(--surface-2) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; animation-iteration-count: 1 !important; transition-duration: 1ms !important; }
+}
+
+/* Brand imagery sits on cream; blend it into the page so no rectangle shows. */
+.brand-img { mix-blend-mode: darken; }
+:root.dark .brand-img { filter: invert(1) hue-rotate(180deg) saturate(1.3); mix-blend-mode: lighten; }
+:root.dark .brand-hero { border-radius: 2rem; background: #f6efe2; }
+:root.dark .deco { opacity: 0.35; }
+
+/* Decorative crops fade softly into the page instead of showing their rectangle. */
+.deco {
+  -webkit-mask-image: radial-gradient(farthest-side at 0% 100%, #000 40%, transparent 100%);
+  mask-image: radial-gradient(farthest-side at 0% 100%, #000 40%, transparent 100%);
+}
+.deco-pot {
+  -webkit-mask-image: radial-gradient(ellipse 70% 85% at 60% 72%, #000 55%, transparent 100%);
+  mask-image: radial-gradient(ellipse 70% 85% at 60% 72%, #000 55%, transparent 100%);
+}
+.soft-edge, .brand-hero {
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%);
+  -webkit-mask-composite: source-in;
+  mask-image: linear-gradient(to right, transparent 0, #000 8%, #000 92%, transparent 100%), linear-gradient(to bottom, transparent 0, #000 7%, #000 93%, transparent 100%);
+  mask-composite: intersect;
+}

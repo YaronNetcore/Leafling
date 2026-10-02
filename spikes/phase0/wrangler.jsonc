@@ -1,20 +1,28 @@
-// Leafling Phase 0 spike — PREVIEW ONLY. Throwaway platform-validation code.
+// Leafling preview Worker (Workers Free, existing preview resources only).
+// Serves the Leafling app (built from the repo root into ../../dist) at "/" and the Phase 0
+// harness at "/phase0/". The custom build below runs automatically on every `wrangler deploy`
+// (including Cloudflare Workers Builds), so no Cloudflare settings change is needed.
 // No secrets in this file. Secrets (ANTHROPIC_API_KEY, VAPID_PRIVATE_KEY) are set only as
 // encrypted Worker secrets in the Cloudflare dashboard. OWNER_EMAIL, ACCESS_AUD and
 // VAPID_PUBLIC_KEY are plain dashboard variables preserved by keep_vars.
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "leafling-preview",
-  "main": "src/worker.ts",
+  "main": "src/combined.ts",
   "compatibility_date": "2026-09-01",
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   "preview_urls": false,
   "keep_vars": true,
   "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "build": {
+    "command": "cd ../.. && (test -d node_modules/vite || npm ci --no-audit --no-fund) && npm run build && cp -r spikes/phase0/public dist/phase0",
+    "watch_dir": ["../../src", "./public"]
+  },
   "assets": {
-    "directory": "./public",
+    "directory": "../../dist",
     "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
     "run_worker_first": ["/api/*", "/keygen", "/keygen.js"]
   },
   "d1_databases": [

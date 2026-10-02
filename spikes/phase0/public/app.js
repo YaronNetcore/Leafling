@@ -72,7 +72,7 @@ async function apiJson(path, opts = {}) {
   if (!res.ok) throw Object.assign(new Error(body.error || `http_${res.status}`), { status: res.status, body });
   return body;
 }
-$("reauth").addEventListener("click", () => { location.href = `/?reauth=${Date.now()}`; });
+$("reauth").addEventListener("click", () => { location.href = `/phase0/?reauth=${Date.now()}`; });
 
 // ---------- Status bar ----------
 async function refreshStatus() {
@@ -454,7 +454,7 @@ $("btnCopyResults").addEventListener("click", async () => {
 });
 
 // ---------- Boot ----------
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => {});
+if ("serviceWorker" in navigator) navigator.serviceWorker.register("/phase0/sw.js", { scope: "/phase0/" }).catch(() => {});
 addEventListener("online", () => { refreshStatus(); sync(); });
 addEventListener("offline", refreshStatus);
 document.addEventListener("visibilitychange", () => { if (document.visibilityState === "visible") sync(); });

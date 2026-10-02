@@ -38,7 +38,7 @@ export async function testPush(req: Request, ctx: Ctx): Promise<Response> {
   const sentAt = new Date().toISOString();
   const title = "Leafling · בדיקה";
   const text = `התראת בדיקה (${mode}) · ${sentAt.slice(11, 19)} UTC`;
-  const navigate = `/?from=push&t=${encodeURIComponent(sentAt)}`;
+  const navigate = `/phase0/?from=push&t=${encodeURIComponent(sentAt)}`;
   const payload = mode === "declarative"
     ? { web_push: 8030, notification: { title, body: text, navigate, lang: "he", dir: "rtl" }, app_badge: badge }
     : { title, body: text, url: navigate, badge };

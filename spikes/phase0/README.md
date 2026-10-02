@@ -1,5 +1,7 @@
 # Leafling — Phase 0 spike (throwaway)
 
+> Since 2026-10-02 this Worker config also hosts the Leafling app: the custom build compiles the repo-root app into `../../dist` (served at `/`), and this harness is served at `/phase0/`. App API: `/api/v1/*` (repo-root `src/worker`); harness API: `/api/*`.
+
 Platform-validation code for `docs/phase0/PHASE0_TEST_PLAN.md`. **Not application code.** It is deleted at the end of Phase 0 and nothing here is promoted into the app.
 
 - Worker: `leafling-preview` → `https://leafling-preview.nisimy.workers.dev` (Cloudflare Free plan, preview only)

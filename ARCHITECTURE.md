@@ -894,4 +894,13 @@ Original preserved unchanged as `assets/brand/leafling-icon-original.jpg` (suppl
 Checks: preview at 180 px (60 pt) and Spotlight size (40 pt); the wordmark must stay legible at 180 px and nothing may touch the mask corners. Manifest: `name: "Leafling"`, `short_name: "Leafling"`, `display: "standalone"`, `lang: "he"`, `dir: "rtl"`, `start_url: "/today"`, `scope: "/"`, `theme_color` / `background_color` from the cream/green tokens.
 
 ---
+
+## Implementation notes (2026-10-02)
+Recorded deviations/details, all within the approved decisions:
+- Sync uses one generic record store (`app_records`: entity + id + JSON data + per-field server revisions) instead of one table per entity; ordering is by server revision / receipt order, conflicts go to `app_conflicts` and are restorable (§10).
+- Service worker is a small build-generated script (per-build cache id, old caches deleted) instead of Workbox; same behaviour as §10.
+- Until production resources are approved, the app is hosted by the preview Worker (`spikes/phase0/wrangler.jsonc` builds the repo-root app into `dist/`); the Phase 0 harness moved to `/phase0/`. D1 changes are additive (`migrations/0001_app_records.sql`).
+- Illustrations are crops of the owner-supplied design references; species photos are labelled species images.
+
+---
 *End of architecture (revision 3.1, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*
