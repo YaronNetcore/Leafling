@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.worker.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run",
     "check": "npm run typecheck && npm test && npm run test:e2e",
-    "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts"
+    "test:e2e": "npm run build && vitest run --config vitest.e2e.config.ts",
+    "verify:live": "NODE_USE_ENV_PROXY=1 node scripts/verify-live.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.131.0",

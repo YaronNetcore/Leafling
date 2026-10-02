@@ -131,7 +131,7 @@ export default function Settings() {
         }}>מחיקת העותק המקומי מהמכשיר והתנתקות</Button>
         {s.pending > 0 && <p className="text-[12px] text-muted">אפשר למחוק את העותק המקומי רק אחרי שכל השינויים סונכרנו.</p>}
       </Card>
-      <p className="mt-6 text-center text-[12px] text-muted">Leafling · כניסה מאובטחת דרך Cloudflare Access</p>
+      <p className="mt-6 text-center text-[12px] text-muted">Leafling · כניסה מאובטחת דרך Cloudflare Access · <span dir="ltr">{__BUILD_COMMIT__.slice(0, 7)}</span></p>
     </main>
   );
 }

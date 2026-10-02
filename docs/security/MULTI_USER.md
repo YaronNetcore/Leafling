@@ -83,6 +83,9 @@ caller's own rows.
   can see it in Dashboard → D1 → `leafling-preview` → Time Travel.*
 - **App export** (Settings → "ייצוא נתונים") gives each user a JSON copy of their own records.
 
+### Automated live check
+`npm run verify:live -- <commit>` (read-only, needs `CLOUDFLARE_API_TOKEN` with Workers Scripts Read + D1 Read, optional R2 Read): maps the commit to its Workers Build and Version ID, confirms that version is active, checks Access still blocks unauthenticated requests, `ACCESS_AUD`/`OWNER_EMAIL` are set and `OWNER_EMAIL` matches the identity holding the original data, and runs the preservation checks below. Prints only counts, versions and masked values.
+
 ### Checks after deploy (D1 console, read-only)
 ```sql
 SELECT key, value, at FROM app_meta;                                   -- schema_version=2, legacy_owner set after the owner opened the app
