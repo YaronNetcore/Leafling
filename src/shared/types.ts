@@ -75,15 +75,17 @@ export interface Location extends BaseRecord {
 }
 
 /**
- * One light observation. New readings are ESTIMATES: "camera_exposure" (from the photo's EXIF exposure) or
- * "user_choice" (the user picked a category when the photo carried no exposure data). Older methods are kept
- * only so existing records still display. Linked to a plant and/or a location.
+ * One light observation. New readings (live-camera Light Meter) are ESTIMATES: "camera_live_dark" (the live
+ * camera stayed dark at its sensitivity limit → low light) or "camera_live_user" (the user named the light she
+ * saw in the spot, guided by the hand-shadow test, because auto-exposed frames cannot tell). Older methods
+ * ("camera_exposure" photo EXIF, "user_choice", …) are kept only so existing records still display.
+ * Linked to a plant and/or a location.
  */
 export interface LightReading extends BaseRecord {
   locationId?: string | null;
   plantId?: string | null;
   measuredAt: string;
-  method: "camera_exposure" | "user_choice" | "manual_lux" | "questionnaire" | "camera_relative";
+  method: "camera_live_dark" | "camera_live_user" | "camera_exposure" | "user_choice" | "manual_lux" | "questionnaire" | "camera_relative";
   lux?: number | null; // legacy manual entries only; never produced by the camera estimate
   category: LightCat;
   estimate?: boolean;

@@ -1,5 +1,5 @@
 // Browser tests (headless Chromium emulating an iPhone viewport — NOT a real iPhone) for the
-// 2026-10 product fixes: identification photo attachments, the simplified Light Meter, multiple pets.
+// 2026-10 product fixes: identification photo attachments and multiple pets (Light Meter: light-meter.e2e.ts).
 // Real production build + real Worker (Miniflare) + Access-like JWT proxy; Anthropic is mocked.
 import { chromium, type Browser, type BrowserContext, type Page } from "playwright-core";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -122,76 +122,7 @@ describe("plant identification photos", () => {
   });
 });
 
-describe("light meter", () => {
-  it("one simple flow: no questionnaire, no lux input, no scores", async () => {
-    await go("/tools");
-    await page.getByText("מד אור", { exact: true }).click();
-    await page.waitForURL(/\/tools\/light/);
-    await expect.poll(body).toContain("כַּווני את הטלפון למקום שבו הצמח נמצא");
-    const t = await body();
-    expect(t).toContain("כַּווני את הטלפון למקום שבו הצמח נמצא");
-    expect(await page.getByRole("button", { name: "מדדי אור" }).count()).toBe(1);
-    for (const bad of ["שאלון", "לוקס", "lux", "/ 100", "/100", "מחוון יחסי", "שלוש דרכים"]) expect(t.includes(bad), bad).toBe(false);
-    expect(await page.locator('input[type="number"]').count()).toBe(0);
-  });
-
-  it("camera photo → category estimate → attach to plant (its location is known) → saved once, as an estimate", async () => {
-    await page.getByTestId("light-camera").setInputFiles({ name: "spot.jpg", mimeType: "image/jpeg", buffer: jpeg({ exposureTime: [1, 1000], fNumber: [178, 100], iso: 50 }) });
-    await page.getByTestId("light-result").waitFor();
-    const t = await body();
-    expect(t).toContain("הערכה");
-    expect(t).toContain("אור חזק");
-    expect(t).toContain("לא מדידה של מד אור מכויל");
-    await shot("light-result");
-    expect(t).not.toMatch(/\d+\s*(lux|לוקס)/i);
-    await page.getByTestId("light-plant").selectOption("plant-1");
-    expect(await body()).toContain('יתווסף גם לפרופיל האור של "חלון מזרחי"');
-    await page.getByRole("button", { name: "שמירה" }).click();
-    await page.waitForURL(/\/plants\/plant-1/, { timeout: 10_000 });
-    await expect.poll(async () => (await A.pullAll()).filter((r) => r.entity === "light").length, { timeout: 15_000 }).toBe(1);
-    const all = await A.pullAll();
-    const reading = all.find((r) => r.entity === "light")!.data;
-    expect(reading).toMatchObject({ plantId: "plant-1", locationId: "loc-east", category: "bright_indirect", method: "camera_exposure", estimate: true });
-    expect(reading.lux ?? null).toBeNull();
-    await expect.poll(async () => (await A.pullAll()).find((r) => r.id === "loc-east")!.data.lightCategory, { timeout: 15_000 }).toBe("bright_indirect");
-    // Shown on the plant's own page, with its source.
-    await expect.poll(body).toContain("האור של הצמח");
-    expect(await body()).toContain("הערכה מצילום");
-  });
-
-  it("opened from a plant: the plant is preselected", async () => {
-    await page.getByRole("button", { name: "מד אור" }).first().click();
-    await page.waitForURL(/\/tools\/light\?plant=plant-1/);
-    await page.getByTestId("light-camera").setInputFiles({ name: "x.jpg", mimeType: "image/jpeg", buffer: jpeg({ exposureTime: [1, 30], fNumber: [178, 100], iso: 640 }) });
-    await page.getByTestId("light-result").waitFor();
-    expect(await page.getByTestId("light-plant").inputValue()).toBe("plant-1");
-    expect(await body()).toContain("אור חלש");
-  });
-
-  it("photo without exposure data: honest message, user picks a category, saved as the user's estimate (location preselected)", async () => {
-    await go("/tools/light?location=loc-east");
-    await page.getByTestId("light-camera").setInputFiles({ name: "noexif.jpg", mimeType: "image/jpeg", buffer: jpeg() });
-    await page.getByTestId("light-result").waitFor();
-    expect(await body()).toContain("אין נתוני חשיפה");
-    await page.getByTestId("light-user-choice").getByText("אור בינוני").click();
-    expect(await body()).toContain('יתווסף לפרופיל האור של "חלון מזרחי"');
-    await page.getByRole("button", { name: "שמירה" }).click();
-    await page.waitForURL(/\/locations\/loc-east/, { timeout: 10_000 });
-    await expect.poll(async () => (await A.pullAll()).filter((r) => r.entity === "light" && r.data.method === "user_choice").length, { timeout: 15_000 }).toBe(1);
-    const r = (await A.pullAll()).find((x) => x.entity === "light" && x.data.method === "user_choice")!.data;
-    expect(r).toMatchObject({ locationId: "loc-east", plantId: null, category: "medium", estimate: true });
-  });
-
-  it("the plant selector offers only this user's plants", async () => {
-    await B.push([mut("plant", "plant-of-B", { id: "plant-of-B", commonName: "צמח של B", status: "plant", ordinal: 1 })]);
-    await go("/tools/light");
-    await page.getByTestId("light-camera").setInputFiles({ name: "y.jpg", mimeType: "image/jpeg", buffer: jpeg({ exposureTime: [1, 250], fNumber: [178, 100], iso: 50 }) });
-    await page.getByTestId("light-result").waitFor();
-    const opts = await page.getByTestId("light-plant").locator("option").allTextContents();
-    expect(opts.join("|")).toContain("פוטוס");
-    expect(opts.join("|")).not.toContain("צמח של B");
-  });
-});
+// Light Meter (live camera): tests/e2e/light-meter.e2e.ts
 
 describe("pets: several of the same kind", () => {
   const pets = async (c: Client) => ((await c.pullAll()).find((r) => r.entity === "profile")?.data.pets ?? []) as { id: string; kind: string; name: string | null }[];

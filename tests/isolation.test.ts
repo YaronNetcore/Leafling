@@ -355,6 +355,22 @@ describe("new personal data types stay per user (light, pets, identification)", 
     expect(h.anthropic.length).toBe(n);
   });
 
+  it("AI context: live-camera Light Meter readings are sent as estimates, never as measurements or lux", async () => {
+    await owner.push([
+      mut("light", "live-dark-1", { id: "live-dark-1", plantId: plant, category: "low", method: "camera_live_dark", estimate: true, measuredAt: "2026-10-02T09:00:00Z" }),
+      mut("light", "live-user-1", { id: "live-user-1", plantId: plant, category: "medium", method: "camera_live_user", estimate: true, measuredAt: "2026-10-02T10:00:00Z" }),
+    ]);
+    h.anthropic.length = 0;
+    const r = await owner.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "ask", plantId: plant, question: "יש מספיק אור?" }) });
+    expect(r.status).toBe(200);
+    const sent = JSON.stringify(h.anthropic.at(-1)!.body);
+    expect(sent).toContain("stayed dark at its sensitivity limit");
+    expect(sent).toContain("user's own visual estimate");
+    expect(sent).toContain("NOT a measurement");
+    expect(sent).not.toMatch(/lux\\":\s*\d/);
+    expect(JSON.stringify(await bob.pullAll())).not.toContain("live-user-1");
+  });
+
   it("identification: images reach the model as image blocks; requests are bound to the caller", async () => {
     h.anthropic.length = 0;
     const jpegB64 = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");

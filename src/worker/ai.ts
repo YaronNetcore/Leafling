@@ -99,7 +99,9 @@ async function buildPlantContext(env: AppEnv, userId: string, plantId: string, q
   if (lightRows.length) {
     ctx.lightObservations = lightRows.map((l) => ({
       date: String(l.measuredAt).slice(0, 10), category: l.category, forThisPlant: l.plantId === plantId,
-      source: l.method === "camera_exposure" ? "rough estimate from phone camera exposure (NOT a calibrated light meter)"
+      source: l.method === "camera_live_dark" ? "rough estimate: the live phone camera stayed dark at its sensitivity limit, i.e. a dim spot (NOT a calibrated light meter)"
+        : l.method === "camera_live_user" ? "user's own visual estimate of the spot (hand-shadow test), NOT a measurement"
+        : l.method === "camera_exposure" ? "rough estimate from phone camera exposure (NOT a calibrated light meter)"
         : l.method === "user_choice" ? "user's own estimate" : l.method === "manual_lux" ? "external lux meter (user-entered)" : "older rough estimate",
     }));
     sections.push("light");

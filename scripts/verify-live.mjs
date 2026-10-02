@@ -31,9 +31,11 @@ const ok = (label, pass, detail = "") => { if (!pass) failures++; console.log(`$
 const info = (label, detail) => console.log(`INFO  ${label} — ${detail}`);
 const mask = (e) => (e ? `${e[0]}***@${e.split("@")[1]?.replace(/^[^.]+/, "***") ?? "?"}` : "(none)");
 
-async function cf(path, init = {}) {
+async function cf(path, init = {}, attempt = 0) {
   const r = await fetch(`https://api.cloudflare.com/client/v4${path}`, { ...init, headers: { ...(TOKEN ? { authorization: `Bearer ${TOKEN}` } : {}), "content-type": "application/json", ...init.headers } });
   const body = await r.json().catch(() => ({}));
+  // Cloudflare API rate limit (HTTP 429 / code 971): back off and retry instead of misreporting the credential.
+  if (r.status === 429 && attempt < 4) { await new Promise((ok) => setTimeout(ok, 2000 * 2 ** attempt)); return cf(path, init, attempt + 1); }
   if (!body.success) throw new Error(`${path.replace(ACCOUNT, ":acct")} → ${r.status} ${JSON.stringify(body.errors ?? []).slice(0, 200)}`);
   return body.result;
 }
@@ -53,8 +55,9 @@ ok("unauthenticated /api/v1/me is redirected to Cloudflare Access", unauth.statu
 const unauthStatic = await fetch(`${LIVE}/version.json`, { redirect: "manual" });
 ok("unauthenticated static files are redirected to Cloudflare Access", unauthStatic.status === 302, String(unauthStatic.status));
 
-if (!TOKEN && !(await cf("/user/tokens/verify").then(() => true, () => false))) {
-  console.log("\nSTOP  no Cloudflare credential (CLOUDFLARE_API_TOKEN not set, none injected) — cannot read the active version, Worker config, D1 or R2.");
+const credential = TOKEN ? null : await cf("/user/tokens/verify").then(() => null, (e) => String(e.message));
+if (credential) {
+  console.log(`\nSTOP  no usable Cloudflare credential (CLOUDFLARE_API_TOKEN not set; injected credential check: ${credential.slice(0, 120)}) — cannot read the active version, Worker config, D1 or R2.`);
   process.exit(failures ? 1 : 2);
 }
 
