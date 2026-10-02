@@ -1,13 +1,14 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AppEnv } from "./env.ts";
 import { HttpError, json, logEvent, readJson } from "./http.ts";
-import { readDisplayAsBase64 } from "./photos.ts";
+import { readDisplayAsBase64, type PhotoOwner } from "./photos.ts";
 
 // Server-side Claude proxy (ARCHITECTURE §11–12).
 // - Key only from the encrypted Worker secret; never sent to the client.
 // - Model allowlist: Sonnet 5 + Haiku 4.5 only (Opus not enabled in v1).
-// - Context is built HERE from D1 for exactly one plant; the client sends only IDs + question.
-//   Other plants are never queried, so they can never be included.
+// - Context is built HERE from D1 for exactly one plant of the signed-in user; the client sends only
+//   IDs + question. Every query is bound to the verified user id, so a guessed plant/photo id of
+//   another user resolves to "not found". Other plants are never queried, so they can never be included.
 // - AI only answers/proposes; it has no write path to user data.
 // - Operational logging is metadata only (no prompt, answer or image content).
 
@@ -60,9 +61,9 @@ const MODE_PROMPT: Record<string, string> = {
 
 interface PlantRow { [k: string]: unknown }
 
-async function buildPlantContext(env: AppEnv, plantId: string, question: string) {
+async function buildPlantContext(env: AppEnv, userId: string, plantId: string, question: string) {
   const sections: string[] = [];
-  const rec = await env.DB.prepare(`SELECT data FROM app_records WHERE entity = 'plant' AND id = ?`).bind(plantId).first<{ data: string }>();
+  const rec = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'plant' AND id = ?`).bind(userId, plantId).first<{ data: string }>();
   if (!rec) throw new HttpError(404, "plant_not_found");
   const p = JSON.parse(rec.data) as PlantRow;
   if (p.deletedAt) throw new HttpError(404, "plant_not_found");
@@ -77,19 +78,19 @@ async function buildPlantContext(env: AppEnv, plantId: string, question: string)
   };
   sections.push("plant");
   if (p.locationId) {
-    const loc = await env.DB.prepare(`SELECT data FROM app_records WHERE entity = 'location' AND id = ?`).bind(String(p.locationId)).first<{ data: string }>();
+    const loc = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'location' AND id = ?`).bind(userId, String(p.locationId)).first<{ data: string }>();
     if (loc) { const l = JSON.parse(loc.data); ctx.location = { name: l.name, kind: l.kind, lightCategory: l.lightCategory ?? null, windowDirection: l.windowDirection ?? null, directSun: l.directSun ?? null }; sections.push("location"); }
   }
   const evRows = (await env.DB.prepare(
-    `SELECT data FROM app_records WHERE entity = 'event' AND json_extract(data, '$.plantId') = ? ORDER BY json_extract(data, '$.occurredAt') DESC LIMIT 40`,
-  ).bind(plantId).all<{ data: string }>()).results;
+    `SELECT data FROM user_records WHERE user_id = ? AND entity = 'event' AND json_extract(data, '$.plantId') = ? ORDER BY json_extract(data, '$.occurredAt') DESC LIMIT 40`,
+  ).bind(userId, plantId).all<{ data: string }>()).results;
   const events = evRows.map((r) => JSON.parse(r.data)).filter((e) => !e.deletedAt)
     .map((e) => ({ date: String(e.occurredAt).slice(0, 10), type: e.type, details: e.payload ?? {} }));
   if (events.length) { ctx.recentHistory = events; sections.push("history"); }
-  const health = (await env.DB.prepare(`SELECT data FROM app_records WHERE entity = 'health' AND json_extract(data, '$.plantId') = ? ORDER BY rev DESC LIMIT 5`).bind(plantId).all<{ data: string }>()).results
+  const health = (await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'health' AND json_extract(data, '$.plantId') = ? ORDER BY rev DESC LIMIT 5`).bind(userId, plantId).all<{ data: string }>()).results
     .map((r) => JSON.parse(r.data)).filter((h) => !h.deletedAt).map((h) => ({ title: h.title, state: h.state, likelyCause: h.likelyCause ?? null, source: h.source }));
   if (health.length) { ctx.healthCases = health; sections.push("health"); }
-  const prof = await env.DB.prepare(`SELECT data FROM app_records WHERE entity = 'profile' AND id = 'me'`).first<{ data: string }>();
+  const prof = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'profile' AND id = 'me'`).bind(userId).first<{ data: string }>();
   if (prof) {
     const pr = JSON.parse(prof.data);
     ctx.user = { region: [pr.region, pr.country].filter(Boolean).join(", ") || null, experience: pr.experience ?? null };
@@ -99,12 +100,13 @@ async function buildPlantContext(env: AppEnv, plantId: string, question: string)
   return { ctx, sections };
 }
 
-async function callClaude(env: AppEnv, feature: string, plantId: string | null, userText: string, images: string[], sections: string[]) {
+async function callClaude(env: AppEnv, userId: string, feature: string, plantId: string | null, userText: string, images: string[], sections: string[]) {
   if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, "ai_not_configured");
   const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-  const spent = await env.DB.prepare(`SELECT COALESCE(SUM(est_cost_usd), 0) AS s FROM app_ai_usage WHERE at >= ?`).bind(monthStart).first<{ s: number }>();
+  // Budget is one shared monthly cap for the whole app (one Anthropic workspace); the rate limit is per user.
+  const spent = await env.DB.prepare(`SELECT COALESCE(SUM(est_cost_usd), 0) AS s FROM user_ai_usage WHERE at >= ?`).bind(monthStart).first<{ s: number }>();
   if ((spent?.s ?? 0) >= (Number(env.AI_BUDGET_USD) || 0)) throw new HttpError(429, "ai_budget_reached");
-  const recent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM app_ai_usage WHERE at >= ?`).bind(new Date(Date.now() - 10 * 60_000).toISOString()).first<{ n: number }>();
+  const recent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM user_ai_usage WHERE user_id = ? AND at >= ?`).bind(userId, new Date(Date.now() - 10 * 60_000).toISOString()).first<{ n: number }>();
   if ((recent?.n ?? 0) >= 20) throw new HttpError(429, "ai_rate_limited");
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 90_000 });
@@ -131,8 +133,8 @@ async function callClaude(env: AppEnv, feature: string, plantId: string | null, 
     const u = res.usage;
     const inTok = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
     const cost = (u.input_tokens * MODEL.inPerM + (u.cache_creation_input_tokens ?? 0) * MODEL.inPerM * 1.25 + (u.cache_read_input_tokens ?? 0) * MODEL.inPerM * 0.1 + u.output_tokens * MODEL.outPerM) / 1_000_000;
-    await env.DB.prepare(`INSERT INTO app_ai_usage (at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(new Date().toISOString(), feature, MODEL.id, plantId, inTok, u.output_tokens, images.length, cost, Date.now() - t0, status, sections.join(",")).run();
+    await env.DB.prepare(`INSERT INTO user_ai_usage (user_id, at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+      .bind(userId, new Date().toISOString(), feature, MODEL.id, plantId, inTok, u.output_tokens, images.length, cost, Date.now() - t0, status, sections.join(",")).run();
     logEvent("ai", { feature, images: images.length, inTok, outTok: u.output_tokens, ms: Date.now() - t0, status });
     if (!result) throw new HttpError(502, status === "refusal" ? "ai_refused" : "ai_unparseable");
     return result;
@@ -150,7 +152,7 @@ function checkImages(images: unknown): string[] {
   return images.map((x) => { if (typeof x !== "string" || x.length > MAX_IMAGE_B64 || !/^[A-Za-z0-9+/=]+$/.test(x)) throw new HttpError(400, "bad_image"); return x; });
 }
 
-export async function aiRequest(req: Request, env: AppEnv): Promise<Response> {
+export async function aiRequest(req: Request, env: AppEnv, user: PhotoOwner): Promise<Response> {
   const body = await readJson<{ mode?: string; plantId?: string; question?: string; images?: string[]; photoIds?: string[]; symptoms?: string[] }>(req, 8_000_000);
   const mode = body.mode ?? "ask";
   if (!(mode in MODE_PROMPT)) throw new HttpError(400, "bad_mode");
@@ -162,14 +164,15 @@ export async function aiRequest(req: Request, env: AppEnv): Promise<Response> {
   let contextJson = "";
   let sections: string[] = [];
   if (plantId) {
-    const built = await buildPlantContext(env, plantId, question);
+    const built = await buildPlantContext(env, user.id, plantId, question);
     sections = built.sections;
     contextJson = JSON.stringify(built.ctx);
     // Referenced photos must belong to this plant (checked against the synced photo records).
-    for (const pid of (body.photoIds ?? []).slice(0, MAX_IMAGES - images.length)) {
-      const ph = await env.DB.prepare(`SELECT data FROM app_records WHERE entity = 'photo' AND id = ?`).bind(pid).first<{ data: string }>();
+    for (const pid of (Array.isArray(body.photoIds) ? body.photoIds : []).slice(0, MAX_IMAGES - images.length)) {
+      if (typeof pid !== "string" || !/^[A-Za-z0-9_-]{1,64}$/.test(pid)) throw new HttpError(400, "bad_photo_id");
+      const ph = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'photo' AND id = ?`).bind(user.id, pid).first<{ data: string }>();
       if (!ph || JSON.parse(ph.data).plantId !== plantId) throw new HttpError(403, "photo_not_of_this_plant");
-      const b64 = await readDisplayAsBase64(env, pid);
+      const b64 = await readDisplayAsBase64(env, user, pid);
       if (b64) images.push(b64);
     }
   }
@@ -181,6 +184,6 @@ export async function aiRequest(req: Request, env: AppEnv): Promise<Response> {
     question ? `שאלה/הערה: ${question}` : "",
     `מספר תמונות מצורפות: ${images.length}.`,
   ].filter(Boolean).join("\n\n");
-  const result = await callClaude(env, mode, plantId, text, images, sections);
+  const result = await callClaude(env, user.id, mode, plantId, text, images, sections);
   return json({ result, contextSections: sections });
 }

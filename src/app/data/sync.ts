@@ -1,5 +1,5 @@
 import type { Entity, MutationResult, PulledRecord } from "../../shared/types.ts";
-import { TABLE_OF, db, deviceId, getMeta, setMeta, type OutboxEntry } from "./db.ts";
+import { currentUserId, db, deviceId, getMeta, recordTables, setMeta, tableOf, type OutboxEntry } from "./db.ts";
 
 // Local-first writes + sync engine.
 // - mutate(): writes the local record AND its outbox entry in one IndexedDB transaction.
@@ -16,12 +16,26 @@ export function onSync(l: Listener) { listeners.add(l); l(state); return () => {
 export const getSyncState = () => state;
 
 export class AuthRequired extends Error {}
+export class UserChanged extends Error {}
 
+/**
+ * Every API call carries X-Leafling-User = the owner of the local database that is open. The server
+ * compares it with the verified Access identity and answers 409 user_mismatch if they differ (the
+ * Access session now belongs to someone else). We then stop immediately — nothing of this user is
+ * sent — and restart at "/", which re-boots with the new identity and that user's own local database.
+ */
 export async function api(path: string, init: RequestInit = {}): Promise<Response> {
-  const res = await fetch(path, { ...init, redirect: "manual", credentials: "same-origin", cache: "no-store" });
+  const headers = new Headers(init.headers);
+  if (currentUserId) headers.set("x-leafling-user", currentUserId);
+  const res = await fetch(path, { ...init, headers, redirect: "manual", credentials: "same-origin", cache: "no-store" });
   if (res.type === "opaqueredirect" || res.status === 0 || res.status === 401) {
     emit({ status: "needs-login" });
     throw new AuthRequired();
+  }
+  if (res.status === 409 && (await res.clone().json().catch(() => ({})) as { error?: string }).error === "user_mismatch") {
+    emit({ status: "needs-login", message: "user_changed" });
+    setTimeout(() => location.replace("/"), 50);
+    throw new UserChanged();
   }
   return res;
 }
@@ -39,7 +53,7 @@ async function refreshPending() {
 
 /** Local-first write: record + outbox entry atomically. Returns the merged record. */
 export async function mutate<T extends { id: string }>(entity: Entity, id: string, patch: Partial<T>): Promise<T> {
-  const table = TABLE_OF[entity];
+  const table = tableOf(entity);
   const dev = await deviceId();
   const now = new Date().toISOString();
   let merged!: T;
@@ -91,7 +105,7 @@ export async function sync(): Promise<void> {
       }
       if (!res.ok) throw new Error(`push_${res.status}`);
       const { results } = (await res.json()) as { results: MutationResult[] };
-      await db.transaction("rw", [db.outbox, ...Object.values(TABLE_OF)], async () => {
+      await db.transaction("rw", [db.outbox, ...recordTables()], async () => {
         const acked = new Set(results.map((r) => r.mutationId));
         const all = await db.outbox.toArray();
         for (const b of batch) if (acked.has(b.mutationId)) await db.outbox.delete(b.seq!);
@@ -103,7 +117,7 @@ export async function sync(): Promise<void> {
               await db.outbox.update(o.seq!, { baseRev: r.appliedRev });
             }
           }
-          const table = TABLE_OF[r.entity];
+          const table = tableOf(r.entity);
           const cur = await table.get(r.recordId);
           if (cur && (cur._rev ?? 0) < r.appliedRev) await table.update(r.recordId, { _rev: r.appliedRev });
         }
@@ -113,7 +127,7 @@ export async function sync(): Promise<void> {
     emit({ status: "idle", lastSyncAt: Date.now(), message: undefined });
     await setMeta("lastSyncAt", Date.now());
   } catch (e) {
-    if (e instanceof AuthRequired) { /* state already "needs-login"; outbox untouched */ }
+    if (e instanceof AuthRequired || e instanceof UserChanged) { /* state already "needs-login"; outbox untouched */ }
     else if (!navigator.onLine) emit({ status: "offline" });
     else emit({ status: "error", message: (e as Error).message });
   } finally {
@@ -136,10 +150,10 @@ async function pullAll() {
 }
 
 async function applyPulled(records: PulledRecord[]) {
-  await db.transaction("rw", [db.outbox, ...Object.values(TABLE_OF)], async () => {
+  await db.transaction("rw", [db.outbox, ...recordTables()], async () => {
     const pending = await db.outbox.where("state").equals("pending").toArray();
     for (const r of records) {
-      const table = TABLE_OF[r.entity];
+      const table = tableOf(r.entity);
       if (!table) continue;
       const cur = await table.get(r.id);
       if (cur && (cur._rev ?? 0) >= r.rev) continue;

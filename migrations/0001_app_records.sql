@@ -1,4 +1,4 @@
--- Leafling app tables (additive only). Applied lazily by src/worker/schema.ts on first API call;
+-- Leafling app tables v1 (additive only). Applied lazily by src/worker/schema.ts on first API call;
 -- kept here as the canonical migration. Never drops or rewrites data; Phase 0 spike tables are untouched.
 
 CREATE TABLE IF NOT EXISTS app_records (

@@ -4,7 +4,8 @@
 **Leafling** (approved working product name)
 
 ## Product summary
-Leafling is a personal, single-user, iPhone-first, Hebrew RTL Progressive Web App for managing and growing plants: personal plant collection with long-term per-plant memory, visual journal and technical history, soil-check-based watering, fertilizing, seedlings and propagation (with groups and lineage), locations and light, diagnosis and treatment tracking, a general plant database, a Wishlist, ten core grow tools, and an AI Botanist powered by the Claude API through a secure server-side layer. General species knowledge is the starting point; the plant's own history gains weight over time. AI never changes data without explicit user confirmation.
+Leafling is a personal, iPhone-first, Hebrew RTL Progressive Web App for managing and growing plants: personal plant collection with long-term per-plant memory, visual journal and technical history, soil-check-based watering, fertilizing, seedlings and propagation (with groups and lineage), locations and light, diagnosis and treatment tracking, a general plant database, a Wishlist, ten core grow tools, and an AI Botanist powered by the Claude API through a secure server-side layer. General species knowledge is the starting point; the plant's own history gains weight over time. AI never changes data without explicit user confirmation.
+Since 2026-10-02 it serves a few independent users (the original owner + two more), each with a completely private environment — not a shared collection (`docs/security/MULTI_USER.md`).
 
 ## Current phase
 Application build (frontend redesign + core app on the approved stack), running on the preview Worker. Phase 0 platform tests on the iPhone are still outstanding. Architecture review: completed (2026-09-27).
@@ -20,7 +21,7 @@ Application build (frontend redesign + core app on the approved stack), running 
 - Web app / PWA, iPhone-first, installable to the Home Screen; not native iOS; no Mac, Xcode, App Store, private Ubuntu server or always-on personal computer.
 - Code in a private GitHub repository.
 - Cloudflare (Pages/Workers, D1, R2, Access) is the direction to validate, not a final choice.
-- One authorized user; no app-specific email/password registration.
+- One authorized user; no app-specific email/password registration. *(Owner change 2026-10-02: three independent, fully isolated users; still no app passwords — Cloudflare Access only.)*
 - Reliable cloud storage with backup and restore; local cache for partial work on weak connections; AI requires internet.
 - Entire UI in Hebrew, true RTL; scientific names LTR inside RTL; metric units.
 - Visual language: natural, soft, warm, lightly illustrated; warm (not black) Dark Mode.
@@ -78,8 +79,16 @@ Completed and verified locally (2026-10-02):
 - Backend: Access-JWT check (fail closed), idempotent server-ordered sync with preserved/restorable conflicts, write-once R2 photos with R2-verified SHA-256, Claude proxy (Sonnet 5 only in app, budget + rate limit, metadata-only logs). D1 changes are additive new `app_*` tables only.
 - Verification: app + worker typecheck; 16 app unit tests + 5 harness tests pass; production build OK; local combined Worker smoke test; screens rendered in Chromium at 393×852 (light/dark), no console errors.
 
+Multi-user isolation (2026-10-02, verified locally):
+- Identity = verified Access JWT `sub` → internal user (`app_users`); browser can't choose an owner. App API no longer owner-only (Access policy decides who signs in); Phase 0 harness stays owner-only.
+- D1: owner-scoped `user_*` tables, every query bound to the verified user; additive atomic migration copies v1 data under an invisible placeholder and hands it once to the verified `OWNER_EMAIL` identity; v1 tables kept untouched as backup (`migrations/0002_user_ownership.sql`).
+- R2: `users/{userId}/photos/…`; v1 photos readable only by the original owner; photos `private, no-cache`.
+- Device: per-user IndexedDB, `X-Leafling-User` latch (no cross-user upload of queued changes), legacy local DB imported only for the owner, sign-out / delete-local-copy in Settings.
+- Tests: 18 server isolation tests (real Worker in workerd, real RS256 JWTs, legacy fixture) + 8 browser tests (same device, offline queue, legacy phone DB) — all pass; details in `docs/security/MULTI_USER.md`.
+- Also fixed: first service-worker install no longer reloads the page; a new device waits for the first pull before showing onboarding.
+
 Not done / known issues:
-- Live deployment not verified by me: the preview URL is behind Access and I have no Cloudflare access. Pushing triggers Workers Builds only if Stage B connected this branch with root `spikes/phase0`.
+- Live deployment and the production D1 migration not verified by me: the preview URL is behind Access and I have no Cloudflare access. Owner checks are listed in `docs/security/MULTI_USER.md` §4. Pushing triggers Workers Builds only if Stage B connected this branch with root `spikes/phase0`.
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.
@@ -97,9 +106,12 @@ Status of Stage B secrets not yet confirmed by the owner (the app shows "AI not 
 Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` and `VAPID_PRIVATE_KEY` (generated in the owner's browser via `/keygen`; never stored in D1 or anywhere else). Plain variables: `OWNER_EMAIL`, `ACCESS_AUD`, `VAPID_PUBLIC_KEY`. Nothing secret in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
+- After confirming isolation on the live app: add the two new users' emails to the Access policy (the developer must not add them).
 - Approve creating production resources (Worker `leafling`, D1, R2) before entering real long-term data, or explicitly accept the preview resources as the interim home.
 - Replace reference-derived illustrations with final art (and the requested pink-variegated Alocasia icon concept) — the approved pothos icon remains in use until a new icon file is supplied.
 - Photo export mechanism (after Phase 0 P0-7).
 
 ## Next recommended step
-Owner opens `https://leafling-preview.nisimy.workers.dev` on the iPhone and confirms the redesigned app loads (if not, check Workers Builds → latest build log). Then run Phase 0 tests at `/phase0/`, and decide on production resources.
+Owner opens the app once (this runs the migration and hands the original data to the owner), checks plants/photos/journal are all there, runs the D1 checks in `docs/security/MULTI_USER.md` §4, then adds the two emails to the Access policy and confirms each new user sees an empty app with their own onboarding.
+
+Earlier: Owner opens `https://leafling-preview.nisimy.workers.dev` on the iPhone and confirms the redesigned app loads (if not, check Workers Builds → latest build log). Then run Phase 0 tests at `/phase0/`, and decide on production resources.

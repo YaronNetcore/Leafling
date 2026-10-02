@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
 import type { Plant, Profile } from "../../shared/types.ts";
-import { db, getMeta } from "../data/db.ts";
+import { currentUserId, db, deleteLocalUserDb, getMeta } from "../data/db.ts";
+import { me, signOut } from "../data/identity.ts";
 import { saveProfile, useProfile } from "../data/store.ts";
 import { apiJson, mutate, onSync, resyncFromServer, sync, type SyncState } from "../data/sync.ts";
 import { useLiveQuery } from "dexie-react-hooks";
@@ -116,6 +117,20 @@ export default function Settings() {
 
       <SectionTitle>התראות</SectionTitle>
       <InfoNote icon="bell">התראות למכשיר (רק לבדיקות אדמה, טיפולים, שתילים והשרשות) יופעלו אחרי שבדיקות שלב 0 על ה-iPhone יאשרו אותן. בינתיים מסך "היום" הוא המקור למשימות.</InfoNote>
+      <SectionTitle>החשבון שלי</SectionTitle>
+      <Card className="space-y-3 p-4">
+        <p className="text-[14px] text-muted">מחובר/ת בתור <span dir="ltr" className="font-medium text-ink">{me?.email ?? "—"}</span>. הנתונים שלך פרטיים ונפרדים מכל משתמש אחר.</p>
+        <Button variant="secondary" className="w-full" icon="logout" onClick={() => {
+          if (s.pending > 0 && !confirm(`יש ${s.pending} שינויים שעוד לא סונכרנו. הם יישמרו במכשיר ויסונכרנו כשתתחבר/י שוב. להתנתק?`)) return;
+          signOut();
+        }}>התנתקות / החלפת משתמש</Button>
+        <Button variant="text" className="w-full" disabled={s.pending > 0} onClick={async () => {
+          if (!currentUserId || !confirm("למחוק את העותק המקומי של הנתונים שלך מהמכשיר הזה? הנתונים בענן לא נמחקים.")) return;
+          await deleteLocalUserDb(currentUserId);
+          signOut();
+        }}>מחיקת העותק המקומי מהמכשיר והתנתקות</Button>
+        {s.pending > 0 && <p className="text-[12px] text-muted">אפשר למחוק את העותק המקומי רק אחרי שכל השינויים סונכרנו.</p>}
+      </Card>
       <p className="mt-6 text-center text-[12px] text-muted">Leafling · כניסה מאובטחת דרך Cloudflare Access</p>
     </main>
   );

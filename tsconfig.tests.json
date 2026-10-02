@@ -3,23 +3,13 @@
     "target": "es2022",
     "module": "esnext",
     "moduleResolution": "bundler",
-    "lib": [
-      "es2023",
-      "dom",
-      "dom.iterable"
-    ],
-    "jsx": "react-jsx",
+    "lib": ["es2023", "dom", "dom.iterable"],
     "strict": true,
     "noEmit": true,
     "skipLibCheck": true,
     "isolatedModules": true,
     "allowImportingTsExtensions": true,
-    "types": [
-      "vite/client"
-    ]
+    "types": ["node"]
   },
-  "include": [
-    "src/app",
-    "src/shared"
-  ]
+  "include": ["tests/**/*.ts", "src/shared", "src/worker/schema.ts", "src/worker/merge.ts"]
 }

@@ -1,6 +1,9 @@
-import { useEffect } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
+import { useEffect, useState } from "react";
 import { Navigate, Route, Routes, useLocation } from "react-router-dom";
+import { db } from "./data/db.ts";
 import { useProfile } from "./data/store.ts";
+import { onSync, type SyncState } from "./data/sync.ts";
 import AddPlant from "./screens/AddPlant.tsx";
 import { Botanist, Diagnose, Identify } from "./screens/AiScreens.tsx";
 import FindPlant, { SpeciesPage } from "./screens/FindPlant.tsx";
@@ -15,9 +18,20 @@ import Tools, { ToolPage } from "./screens/Tools.tsx";
 import Welcome from "./screens/Welcome.tsx";
 import { MainLayout } from "./ui/Shell.tsx";
 
+/** True once this device's copy has been pulled at least once (or syncing is impossible right now). */
+function useFirstSyncSettled(): boolean {
+  const [s, setS] = useState<SyncState | null>(null);
+  useEffect(() => onSync(setS), []);
+  const synced = useLiveQuery(async () => Boolean(await db.meta.get("lastSyncAt")), [], undefined);
+  return Boolean(synced || s?.lastSyncAt || (s && ["offline", "needs-login", "error"].includes(s.status)));
+}
+
 function Home() {
   const profile = useProfile();
+  const settled = useFirstSyncSettled();
   if (profile === undefined) return null;
+  // An existing user on a new device: wait for the first pull before deciding it is a brand-new user.
+  if (!profile && !settled) return null;
   if (!profile || (!profile.onboardingDone && !profile.welcomeSeen)) return <Navigate to="/welcome" replace />;
   if (!profile.onboardingDone) return <Navigate to={`/onboarding/${profile.onboardingStep || 1}`} replace />;
   return <Navigate to="/today" replace />;

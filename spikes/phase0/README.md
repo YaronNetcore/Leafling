@@ -7,7 +7,7 @@ Platform-validation code for `docs/phase0/PHASE0_TEST_PLAN.md`. **Not applicatio
 - Worker: `leafling-preview` → `https://leafling-preview.nisimy.workers.dev` (Cloudflare Free plan, preview only)
 - Bindings (from `wrangler.jsonc`): D1 `DB` → `leafling-preview`, R2 `PHOTOS` → `leafling-preview-photos`
 - Deployment: Cloudflare Workers Builds from branch `claude/gifted-gates-l6yzsf`, root directory `spikes/phase0`, deploy command `npx wrangler deploy`
-- Access: the whole workers.dev hostname is protected by Cloudflare Access (email one-time PIN). The Worker also verifies the Access JWT (`Cf-Access-Jwt-Assertion`: signature, `aud`, `iss`, `exp`, owner email) and **fails closed** if `ACCESS_AUD` or `OWNER_EMAIL` are missing.
+- Access: the whole workers.dev hostname is protected by Cloudflare Access (email one-time PIN). The harness (`src/auth.ts`) verifies the Access JWT (`Cf-Access-Jwt-Assertion`: signature, `aud`, `iss`, `exp`, owner email) and **fails closed** if `ACCESS_AUD` or `OWNER_EMAIL` are missing — the harness stays owner-only. The app API (`/api/v1/*`) is multi-user since 2026-10-02: see `docs/security/MULTI_USER.md`.
 
 ## Configuration (never in Git)
 | Name | Kind | Set where |

@@ -902,5 +902,14 @@ Recorded deviations/details, all within the approved decisions:
 - Until production resources are approved, the app is hosted by the preview Worker (`spikes/phase0/wrangler.jsonc` builds the repo-root app into `dist/`); the Phase 0 harness moved to `/phase0/`. D1 changes are additive (`migrations/0001_app_records.sql`).
 - Illustrations are crops of the owner-supplied design references; species photos are labelled species images.
 
+## Multi-user isolation (2026-10-02, owner request)
+Leafling now serves **three independent users**, each with a completely private environment. This is **not** a shared collection. It supersedes the "single user / one authorized address" parts of §1 and §6; everything else (Access, Free plan, one Worker, one D1, one R2 bucket, local-first sync) is unchanged. Full model, threat list, tests and recovery: **`docs/security/MULTI_USER.md`**.
+- **Identity:** Cloudflare Access (one-time PIN) decides who may sign in. The Worker verifies the Access JWT (RS256 signature against the team certs, `aud`, `iss`, `exp`, `nbf`, `type=app`) and keys each person by the verified **`sub`** (not the email) → internal `app_users.id` (UUID). The browser never supplies an owner, user id or email that the server trusts.
+- **Ownership in D1:** every personal row carries `user_id` in owner-scoped tables (`user_records`, `user_changes`, `user_mutations`, `user_conflicts`, `user_ai_usage`) whose keys start with `user_id`; every query binds the verified user id. Revisions, mutation ids and conflicts are per user. Species knowledge stays global (bundled catalog).
+- **R2:** `users/{userId}/photos/{photoId}/{variant}`, built server-side from a validated UUID + fixed variant. Photos uploaded before multi-user (`app/photos/…`) are readable only by the claimed original owner. Responses are `private, no-cache` so a shared device's HTTP cache can't serve one user's photo to another.
+- **Migration:** additive and atomic (`migrations/0002_user_ownership.sql`, applied by the Worker). v1 rows are copied under a placeholder owner visible to nobody; the v1 tables remain as an in-database backup. The data is handed once, atomically, to the verified identity whose email equals `OWNER_EMAIL` (the only identity the v1 app ever accepted) — never to whoever signs in first.
+- **Device:** one IndexedDB database per user (`leafling-u-{userId}`: records, outbox, blobs, sync cursor). Every API call carries `X-Leafling-User` (the local database's owner); a mismatch with the signed-in identity is refused (409) and the app restarts as the new user, so one user's queued changes can never be uploaded under another. The pre-multi-user local database is imported only for the original owner.
+- **AI:** context is built server-side only from the caller's records; budget is one shared monthly cap, rate limit per user.
+
 ---
 *End of architecture (revision 3.1, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*

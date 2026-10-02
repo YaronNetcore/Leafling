@@ -66,7 +66,7 @@ export function SyncBanner() {
     return (
       <div className="fixed inset-x-3 top-[max(env(safe-area-inset-top),8px)] z-50 mx-auto flex max-w-md items-center gap-3 rounded-2xl bg-surface p-3 shadow-lift">
         <Icon name="cloud" className="text-green" />
-        <div className="flex-1 text-[14px] leading-snug"><b className="text-ink">צריך להתחבר מחדש</b><br /><span className="text-muted">השינויים שלך שמורים במכשיר ({s.pending}) ויסונכרנו אחרי ההתחברות.</span></div>
+        <div className="flex-1 text-[14px] leading-snug">{s.message === "user_changed" ? <><b className="text-ink">החשבון התחלף</b><br /><span className="text-muted">טוענים את הנתונים של המשתמש שמחובר עכשיו…</span></> : <><b className="text-ink">צריך להתחבר מחדש</b><br /><span className="text-muted">השינויים שלך שמורים במכשיר ({s.pending}) ויסונכרנו אחרי ההתחברות.</span></>}</div>
         <button className="pressable rounded-full bg-green px-4 py-2 text-[14px] font-semibold text-on-green" onClick={() => { location.href = `/?reauth=${Date.now()}`; }}>התחברות</button>
       </div>
     );

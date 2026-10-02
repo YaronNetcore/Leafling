@@ -1,8 +1,10 @@
 import type { AppEnv as Env } from "./env.ts";
 import { HttpError, b64urlDecode } from "./http.ts";
 
-// Verifies the Cloudflare Access JWT (Cf-Access-Jwt-Assertion). Fails closed if
-// ACCESS_AUD or OWNER_EMAIL are not configured.
+// Verifies the Cloudflare Access JWT (Cf-Access-Jwt-Assertion): RS256 signature against the team's
+// published certs, audience, issuer, expiry and not-before. Fails closed if ACCESS_AUD is not configured.
+// Returns the verified identity only — the caller never takes a user id or email from the browser.
+// Who may sign in at all is decided by the Cloudflare Access policy.
 
 interface Jwk { kid: string; kty: string; n: string; e: string; alg?: string }
 let certCache: { keys: Jwk[]; fetchedAt: number } | null = null;
@@ -16,18 +18,20 @@ async function getKeys(teamDomain: string, forceRefresh = false): Promise<Jwk[]>
   return body.keys;
 }
 
-export async function authenticate(req: Request, env: Env, url: URL): Promise<string> {
-  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (isLocal && env.DEV_AUTH_BYPASS === "true") return "dev@localhost";
+export interface Identity { sub: string; email: string }
 
-  if (!env.ACCESS_AUD || !env.OWNER_EMAIL) throw new HttpError(503, "auth_not_configured");
+export async function authenticate(req: Request, env: Env, url: URL): Promise<Identity> {
+  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
+  if (isLocal && env.DEV_AUTH_BYPASS === "true") return { sub: "dev-local", email: "dev@localhost" };
+
+  if (!env.ACCESS_AUD) throw new HttpError(503, "auth_not_configured");
   const token = req.headers.get("cf-access-jwt-assertion");
   if (!token) throw new HttpError(401, "missing_access_token");
 
   const parts = token.split(".");
   if (parts.length !== 3) throw new HttpError(401, "malformed_token");
   let header: { kid?: string; alg?: string };
-  let payload: { aud?: string | string[]; email?: string; exp?: number; nbf?: number; iss?: string };
+  let payload: { aud?: string | string[]; email?: string; sub?: string; exp?: number; nbf?: number; iss?: string; type?: string };
   try {
     header = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[0])));
     payload = JSON.parse(new TextDecoder().decode(b64urlDecode(parts[1])));
@@ -65,8 +69,9 @@ export async function authenticate(req: Request, env: Env, url: URL): Promise<st
   if (payload.iss !== `https://${env.ACCESS_TEAM_DOMAIN}`) throw new HttpError(401, "bad_issuer");
   if (!payload.exp || payload.exp < now) throw new HttpError(401, "token_expired");
   if (payload.nbf && payload.nbf > now + 60) throw new HttpError(401, "token_not_yet_valid");
-  if (!payload.email || payload.email.toLowerCase() !== env.OWNER_EMAIL.toLowerCase()) {
-    throw new HttpError(403, "not_owner");
-  }
-  return payload.email;
+  if (payload.type !== undefined && payload.type !== "app") throw new HttpError(401, "bad_token_type");
+  // `sub` is the stable Access identity id and becomes the permanent key; service tokens (no sub) are refused.
+  if (typeof payload.sub !== "string" || !/^[A-Za-z0-9_.:@-]{1,128}$/.test(payload.sub)) throw new HttpError(401, "no_identity");
+  if (typeof payload.email !== "string" || !payload.email.includes("@") || payload.email.length > 254) throw new HttpError(401, "no_identity");
+  return { sub: payload.sub, email: payload.email.toLowerCase() };
 }
