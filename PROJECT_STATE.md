@@ -95,7 +95,8 @@ Product fixes from real iPhone testing (2026-10-02, verified in desktop Chromium
 - Tests: 50 unit/integration (incl. 23 server isolation) + 24 browser tests, all passing.
 
 Not done / known issues:
-- Production verification of D1 (migration, data preservation, ownership), Worker variables/secrets and active version is blocked: no `CLOUDFLARE_API_TOKEN` in the development environment and the whole hostname is behind Access. Build→version mapping IS verified from the GitHub check runs. `npm run verify:live` runs the rest once a read-only token is provided.
+- Live AI not yet exercised end-to-end: the dev environment cannot pass Cloudflare Access (no signed-in browser session), so the first real identify / ask / diagnose call must be made by a signed-in user. `npm run verify:live` then shows its metadata (feature, status, image count, tokens, latency, cost — never content).
+- Not readable with the current read-only credential: R2 object listing (R2 Read) and Workers Logs (Workers Observability Read). Failed AI calls are therefore also recorded as metadata rows in `user_ai_usage` (since `e99472c`).
 - Light estimate and photo picker not yet confirmed on a real iPhone (EXIF exposure availability from Safari camera capture is expected but unverified; the fallback covers its absence).
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
@@ -104,7 +105,10 @@ Not done / known issues:
 ## Deployment status (2026-10-02)
 - Every push to `claude/gifted-gates-l6yzsf` is built and deployed by Workers Builds (`leafling-preview`, root `spikes/phase0`, `npx wrangler deploy`). Commit → build → version mapping comes from the commit's GitHub check run.
 - `89c5785` (multi-user) → version `cc014dc5`; `3aeeba7` (verification tooling) → `96857cf5`; `e4f45e0` (product fixes) → `a9ed1c83-7ed1-4171-87a3-fcb575092521`, build success 13:07 UTC. The docs-only commit after it gets its own build; see its check run.
-- Not verifiable from the dev environment (no Cloudflare token; Access in front): which version is ACTIVE, Worker variables/secrets, D1 migration state. The live app shows its commit in Settings (footer) and at `/version.json`.
+- 13:33 UTC: owner added the secret `ANTHROPIC_API_KEY` in the dashboard (version `41bb1b6b`, same script hash as `5971b03c`).
+- `e99472c` (failed-AI metadata + extended verify:live) → version `dcfb0288`, ACTIVE at 100% since 13:40 UTC; secret, `ACCESS_AUD`, `OWNER_EMAIL`, D1 `DB` and R2 `PHOTOS` bindings intact (`keep_vars`).
+- Verification from the dev environment works: the cloud environment has a read-only Cloudflare credential ("Cloudflare Leafling ReadOnly") injected by the proxy for api.cloudflare.com; `npm run verify:live -- <commit>` needs no variable. 2026-10-02 run: all checks pass — migration v2, 4/4 original records for the owner, nothing unclaimed, no orphan rows in any per-user table, 2 users (owner + one more), no AI calls yet.
+- The live app shows its commit in Settings (footer) and at `/version.json`.
 
 ## Cloudflare resources
 Free plan only; billing alerts configured; no API tokens created by the owner. Created by the owner in Stage A (2026-09-27):
@@ -115,7 +119,7 @@ Free plan only; billing alerts configured; no API tokens created by the owner. C
 Worker `leafling-preview` + Access application: Access confirmed active (unauthenticated requests redirect to `nisimy.cloudflareaccess.com`, checked 2026-10-02). It now serves the app at `/` and the Phase 0 harness at `/phase0/`. No production resources.
 
 ## API secrets
-Status of Stage B secrets not yet confirmed by the owner (the app shows "AI not configured" until `ANTHROPIC_API_KEY` exists). Anthropic workspace `Leafling Preview` exists (US$5 prepaid, US$5 monthly limit, alerts at US$1/US$4, auto-reload off); no API key created yet.
+`ANTHROPIC_API_KEY` is set as an encrypted secret on `leafling-preview` (2026-10-02, verified as a `secret_text` binding; value never read). Model `claude-sonnet-5`, app budget US$2/month (`AI_BUDGET_USD`), 20 calls per user per 10 minutes. `VAPID_PRIVATE_KEY` not yet set. Anthropic workspace `Leafling Preview` exists (US$5 prepaid, US$5 monthly limit, alerts at US$1/US$4, auto-reload off); no API key created yet.
 Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` and `VAPID_PRIVATE_KEY` (generated in the owner's browser via `/keygen`; never stored in D1 or anywhere else). Plain variables: `OWNER_EMAIL`, `ACCESS_AUD`, `VAPID_PUBLIC_KEY`. Nothing secret in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
@@ -125,6 +129,6 @@ Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker sec
 - Photo export mechanism (after Phase 0 P0-7).
 
 ## Next recommended step
-1. Owner adds a read-only Cloudflare API token (Workers Scripts Read + D1 Read, optional R2 Read) as the environment variable `CLOUDFLARE_API_TOKEN` in the Claude cloud environment → next session runs `npm run verify:live` (active version, OWNER_EMAIL/ACCESS_AUD, migration, original-data preservation).
-2. Owner adds the Worker secret `ANTHROPIC_API_KEY` (Cloudflare → Workers → `leafling-preview` → Settings → Variables and Secrets → type Secret) to enable identification.
-3. Owner opens the app once before the other two users do (claims the original data), then checks plants/photos/journal and the Settings build stamp.
+1. Owner runs one live AI test while signed in (one identification with a photo, one AI Botanist question on a plant, one diagnosis) → `npm run verify:live` confirms the calls (status `ok`, image counts, own-plant context).
+2. Optional: add R2 Read and Workers Observability Read to the read-only Cloudflare credential (photo-preservation check, error logs).
+3. Real-iPhone confirmation of the photo picker / light estimate; Phase 0 iPhone tests.
