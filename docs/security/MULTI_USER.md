@@ -90,6 +90,9 @@ SELECT COUNT(*) FROM app_records;                                       -- v1 ro
 SELECT value FROM app_meta WHERE key='legacy_copied_records';           -- must equal the line above at migration time
 SELECT user_id, COUNT(*) FROM user_records GROUP BY user_id;            -- '__legacy__' must be gone once the owner signed in
 SELECT id, email, created_at, last_login_at FROM app_users;             -- one row per person
+-- Writes by an old Worker instance during the few seconds of global rollout (expected 0). Such rows are
+-- still safe in app_records; if any exist, re-sync from the owner's phone or copy them over by hand.
+SELECT COUNT(*) FROM app_records WHERE updated_at > (SELECT at FROM app_meta WHERE key='schema_version');
 ```
 
 ### Recovery
