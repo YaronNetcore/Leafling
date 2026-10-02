@@ -101,6 +101,11 @@ Not done / known issues:
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.
 
+## Deployment status (2026-10-02)
+- Every push to `claude/gifted-gates-l6yzsf` is built and deployed by Workers Builds (`leafling-preview`, root `spikes/phase0`, `npx wrangler deploy`). Commit → build → version mapping comes from the commit's GitHub check run.
+- `89c5785` (multi-user) → version `cc014dc5`; `3aeeba7` (verification tooling) → `96857cf5`; `e4f45e0` (product fixes) → `a9ed1c83-7ed1-4171-87a3-fcb575092521`, build success 13:07 UTC. The docs-only commit after it gets its own build; see its check run.
+- Not verifiable from the dev environment (no Cloudflare token; Access in front): which version is ACTIVE, Worker variables/secrets, D1 migration state. The live app shows its commit in Settings (footer) and at `/version.json`.
+
 ## Cloudflare resources
 Free plan only; billing alerts configured; no API tokens created by the owner. Created by the owner in Stage A (2026-09-27):
 - workers.dev subdomain: `nisimy.workers.dev`
