@@ -101,8 +101,18 @@ Light Meter as a live in-app camera (2026-10-02, owner feedback: the native phot
 - Camera released on leave, app hidden, interruption and after measuring; Hebrew messages for denied / no camera / busy / unsupported.
 - Tests: 64 unit/integration (incl. 25 server isolation) + 33 browser (14 for the Light Meter) — all pass. Headless Chromium with iPhone viewport only; NOT yet on a real iPhone.
 
+Product update (2026-10-02, owner requirements 1–28) — implemented, tested, deployed:
+- Tools: pest ID, "what is this?" and the substrate-mix builder removed (Diagnose / AI Botanist cover them).
+- Identification → My Plants: the original identification photos become the new plant's photos (first = main) via the normal pipeline; nothing stored if not saved.
+- AI Botanist = real chat: per-plant history (server-written `chat`/`message` records, synced), streaming answers (SSE through the Worker), stop, retry, no duplicate answers, compact question-aware context (1 D1 round trip, 55–63 % smaller), shorter answers.
+- Schema v3 (additive): `user_chat_runs`, two indexes, timing columns. Applied on the first signed-in request after deploy.
+- Catalog: 14 curated + 286 catalog entries (data packs, validated, honest provenance, placeholders instead of unlicensed photos); search in Hebrew/English/scientific/synonyms; AI identifications outside the catalog stay usable.
+- Measurements: `docs/perf/AI_PERFORMANCE_2026-10.md` (real production baseline: old Botanist 17 s / identify 20–29 s until any text; local streaming pipeline overhead ≈ 50 ms).
+- Tests: 96 unit/integration/isolation + 51 browser tests, all passing (Chromium at iPhone size, mocked model).
+
 Not done / known issues:
-- Live AI not yet exercised end-to-end: the dev environment cannot pass Cloudflare Access (no signed-in browser session), so the first real identify / ask / diagnose call must be made by a signed-in user. `npm run verify:live` then shows its metadata (feature, status, image count, tokens, latency, cost — never content).
+- Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
+- Catalog content is an unverified editorial draft (no primary-source check yet); no licensed plant photos added yet.
 - Not readable with the current read-only credential: R2 object listing (R2 Read) and Workers Logs (Workers Observability Read). Failed AI calls are therefore also recorded as metadata rows in `user_ai_usage` (since `e99472c`).
 - Live Light Meter and photo picker not yet confirmed on a real iPhone (Safari camera permission prompt, inline preview, green camera indicator turning off). Android/desktop exposure metadata is deliberately not used (only meaningful in manual mode, device-dependent).
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
