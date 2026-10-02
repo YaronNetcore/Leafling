@@ -13,7 +13,8 @@ for one user to see, change, download, sync or infer another user's data.
    New personal tables must have `user_id TEXT NOT NULL` as the first column of their primary key or a
    leading index column. Global data (species catalog) must not contain personal data.
 3. **"Not found" and "not yours" look identical** (same status, same body). Errors never echo stored data.
-4. **R2 keys are built on the server** as `users/{userId}/photos/{uuid}/{original|display|thumb}`.
+4. **R2 keys are built on the server** as `users/{userId}/photos/{uuid}/{original|display|thumb}` (chat images:
+   `users/{userId}/chat/{messageUuid}/{0-3}`).
    Never accept a path, prefix or key from the browser. The bucket stays private; no public URLs. If signed
    URLs are ever introduced, authorize first and sign only keys under the caller's prefix.
 5. **Responses with personal data are not shared-cacheable**: JSON is `no-store`; photos are
@@ -46,7 +47,9 @@ for one user to see, change, download, sync or infer another user's data.
 | `user_changes` | (`user_id`, `seq`) | per-user change sequence (server-ordered revisions) |
 | `user_mutations` | (`user_id`, `mutation_id`) | per-user idempotency (a replayed id from another user is just a new mutation) |
 | `user_conflicts` | `id`, index (`user_id`, `id`) | overwritten values, restorable |
-| `user_ai_usage` | `id`, index (`user_id`, `at`) | AI metadata only (no prompts/answers) |
+| `user_ai_usage` | `id`, index (`user_id`, `at`) | AI metadata only (no prompts/answers); since v3 also time to first token, context size, phase timings |
+| `user_chat_runs` | (`user_id`, `message_id`) | v3: one row per chat message sent to the AI (duplicate protection: running / done / partial / failed / stopping) |
+| (in `user_records`) entities `chat`, `message` | as above | v3: AI Botanist conversations and messages — written **only by the server** for the verified user; the browser may rename/delete a `chat` but can never push a `message` |
 | `app_records`, `app_changes`, `app_mutations`, `app_conflicts`, `app_ai_usage` | — | **v1 tables, frozen** — no longer read or written; kept as an in-database backup |
 | `spike_*` | — | Phase 0 harness (owner-only, unchanged) |
 
@@ -152,6 +155,7 @@ Worker; a local proxy injects the Access JWT for the identity in a cookie (what 
 | 15 | Phase 0 | harness works for the owner, 403 for others, 401 without token |
 | — | new data (2026-10) | light observations, multiple pets, identification images and AI context (light estimates, pet kinds) stay in the caller's space; foreign plant ids → own space / 404 |
 | — | concurrency | three users pushing in parallel (with CAS retries) never mix; per-user revisions unique |
+| — | AI chat (2026-10, `tests/chat.test.ts`, `tests/e2e/chat.e2e.ts`) | B with A's plant id → 404 before any model call; B reusing A's chat id gets an empty conversation of B's own (no history/context of A); B cannot read A's chat images or stop A's answer; the browser cannot push `message` records; a chat stays bound to its plant; same message id → never answered twice; B's device shows none of A's chats |
 
 Run: `npm test` (unit + server isolation) and `npm run test:e2e` (builds, then the browser tests).
 Each suite was also checked against deliberately broken code (unscoped pull, no legacy gate, no client

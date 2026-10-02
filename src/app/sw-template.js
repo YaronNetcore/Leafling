@@ -6,6 +6,7 @@
 const BUILD_ID = "__BUILD_ID__";
 const SHELL = `leafling-shell-${BUILD_ID}`;
 const IMAGES = "leafling-images-v1";
+const CATALOG = "leafling-catalog-v1";
 const PRECACHE = __PRECACHE__;
 
 self.addEventListener("install", (e) => {
@@ -32,6 +33,12 @@ self.addEventListener("fetch", (e) => {
   }
   if (url.pathname.startsWith("/assets/") || url.pathname.startsWith("/icons/") || url.pathname === "/manifest.webmanifest") {
     e.respondWith(caches.match(req).then((hit) => hit || fetch(req)));
+    return;
+  }
+  if (url.pathname.startsWith("/catalog/")) {
+    // General plant catalog (no personal data): network first so updates arrive, cached copy when offline.
+    e.respondWith(fetch(req).then((res) => { if (res.ok) { const copy = res.clone(); caches.open(CATALOG).then((c) => c.put(req, copy)); } return res; })
+      .catch(() => caches.match(req, { cacheName: CATALOG }).then((hit) => hit || Response.error())));
     return;
   }
   if (url.pathname.startsWith("/img/")) {

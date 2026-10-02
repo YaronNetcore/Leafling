@@ -1,5 +1,5 @@
 import Dexie, { type Table } from "dexie";
-import type { Entity, HealthCase, LightReading, Location, Photo, Plant, PlantEvent, Profile, Reminder, WishlistItem } from "../../shared/types.ts";
+import type { Chat, ChatMessage, Entity, HealthCase, LightReading, Location, Photo, Plant, PlantEvent, Profile, Reminder, WishlistItem } from "../../shared/types.ts";
 
 // IndexedDB = the offline local copy + the pending-change queue (outbox).
 // D1 is the durable source of truth (ARCHITECTURE §10). Outbox entries are only removed
@@ -35,6 +35,8 @@ export const STORES = {
   blobs: "key",
   meta: "key",
 };
+/** v2 (2026-10): AI Botanist conversations and their messages (server-written, synced like other records). */
+export const STORES_V2 = { ...STORES, chats: "id, plantId, lastMessageAt", messages: "id, chatId, at" };
 
 export class LeaflingDB extends Dexie {
   plants!: Table<Plant, string>;
@@ -49,10 +51,15 @@ export class LeaflingDB extends Dexie {
   outbox!: Table<OutboxEntry, number>;
   blobs!: Table<BlobEntry, string>;
   meta!: Table<MetaEntry, string>;
+  chats!: Table<Chat, string>;
+  messages!: Table<ChatMessage, string>;
 
   constructor(name: string) {
     super(name);
     this.version(1).stores(STORES);
+    // Additive. Older app versions skipped chat records during pulls (unknown entity) and moved the cursor
+    // past them, so the cursor is reset once to fetch everything again (records are merged by revision).
+    this.version(2).stores(STORES_V2).upgrade((tx) => tx.table("meta").delete("pullSince"));
   }
 }
 
@@ -78,10 +85,10 @@ export function openUserDb(userId: string): LeaflingDB {
 export function tableOf(entity: Entity): Table<any, string> {
   return ({
     plant: db.plants, event: db.events, location: db.locations, light: db.lights, photo: db.photos,
-    wishlist: db.wishlist, health: db.health, profile: db.profile, reminder: db.reminders,
+    wishlist: db.wishlist, health: db.health, profile: db.profile, reminder: db.reminders, chat: db.chats, message: db.messages,
   } as Record<Entity, Table<any, string>>)[entity];
 }
-export const recordTables = () => [db.plants, db.events, db.locations, db.lights, db.photos, db.wishlist, db.health, db.profile, db.reminders];
+export const recordTables = () => [db.plants, db.events, db.locations, db.lights, db.photos, db.wishlist, db.health, db.profile, db.reminders, db.chats, db.messages];
 
 /**
  * One-time device migration for the legacy owner only: copies the pre-multi-user local database
@@ -95,7 +102,7 @@ export async function importLegacyLocalDb(target: LeaflingDB): Promise<boolean> 
   const legacy = new LeaflingDB(LEGACY_DB_NAME);
   try {
     await legacy.open();
-    const tables = Object.keys(STORES) as (keyof typeof STORES)[];
+    const tables = Object.keys(STORES) as (keyof typeof STORES)[]; // the legacy database predates chats
     const dump = await Promise.all(tables.map((t) => legacy.table(t).toArray()));
     await target.transaction("rw", tables.map((t) => target.table(t)), async () => {
       for (let i = 0; i < tables.length; i++) {

@@ -43,7 +43,7 @@ export function aiErrorText(code: string): string {
 /** @deprecated use prepareForUpload from ./images.ts */
 export { prepareForUpload as prepareImages } from "./images.ts";
 
-export async function askAi(body: { mode: "ask" | "identify" | "pest" | "what" | "diagnose"; plantId?: string; question?: string; images?: string[]; photoIds?: string[]; symptoms?: string[] }): Promise<AiResult> {
+export async function askAi(body: { mode: "ask" | "identify" | "diagnose"; plantId?: string; question?: string; images?: string[]; photoIds?: string[]; symptoms?: string[] }): Promise<AiResult> {
   if (!navigator.onLine) throw new Error("offline");
   let res: Response;
   try {
@@ -59,3 +59,20 @@ export async function askAi(body: { mode: "ask" | "identify" | "pest" | "what" |
 
 /** Hand-off of picked photos between screens (kept in memory only). */
 export const picked: { files: File[] } = { files: [] };
+
+/**
+ * The ORIGINAL files used for an identification, handed to "add to my plants" in memory only. Nothing is
+ * stored until the user actually saves the plant (then they go through the normal photo pipeline: original
+ * byte-identical in IndexedDB → R2, display/thumb copies). Leaving without saving persists nothing.
+ */
+export const identification: { files: File[]; at: number } = { files: [], at: 0 };
+export function carryIdentificationPhotos(files: File[]) {
+  identification.files = files.slice(0, 4);
+  identification.at = Date.now();
+}
+/** Takes the carried originals (valid for 30 minutes) and clears the hand-off. */
+export function takeIdentificationPhotos(): File[] {
+  const files = Date.now() - identification.at < 30 * 60_000 ? identification.files : [];
+  identification.files = [];
+  return files;
+}

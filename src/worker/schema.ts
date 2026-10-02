@@ -9,6 +9,10 @@
 // interrupted migration leaves nothing half-done. The v1 tables are left untouched as an in-database
 // backup. Legacy rows are handed to the original owner only by users.ts (verified Access identity
 // whose email equals OWNER_EMAIL — the only identity the v1 app ever accepted), exactly once.
+// v3 (AI Botanist chat, 2026-10): additive only — a per-user chat run table (idempotency / duplicate
+// protection), two lookup indexes on user_records (records of one plant / one conversation) and three
+// nullable timing columns on user_ai_usage. Chats and messages themselves are ordinary per-user records
+// (entities "chat" and "message") in user_records, so they sync like everything else.
 
 export const LEGACY_OWNER = "__legacy__";
 
@@ -59,6 +63,33 @@ export const APP_SCHEMA_V2 = [
   `CREATE INDEX IF NOT EXISTS user_ai_usage_user ON user_ai_usage (user_id, at)`,
 ];
 
+export const APP_SCHEMA_V3 = [
+  `CREATE TABLE IF NOT EXISTS user_chat_runs (
+     user_id TEXT NOT NULL, message_id TEXT NOT NULL, chat_id TEXT NOT NULL, state TEXT NOT NULL,
+     started_at TEXT NOT NULL, finished_at TEXT,
+     PRIMARY KEY (user_id, message_id))`,
+  // Records of one plant (events, photos, light, health) and messages of one conversation, per user.
+  `CREATE INDEX IF NOT EXISTS user_records_plant ON user_records (user_id, entity, json_extract(data, '$.plantId'))`,
+  `CREATE INDEX IF NOT EXISTS user_records_chat ON user_records (user_id, entity, json_extract(data, '$.chatId'))`,
+];
+/** Nullable columns added to user_ai_usage in v3 (metadata only: timings, context size). */
+export const AI_USAGE_V3_COLUMNS: [string, string][] = [["first_token_ms", "INTEGER"], ["context_chars", "INTEGER"], ["timings", "TEXT"]];
+
+async function migrateV3(db: D1Database): Promise<void> {
+  await db.batch(APP_SCHEMA_V3.map((s) => db.prepare(s)));
+  const cols = new Set((await db.prepare(`SELECT name FROM pragma_table_info('user_ai_usage')`).all<{ name: string }>()).results.map((r) => r.name));
+  for (const [name, type] of AI_USAGE_V3_COLUMNS) {
+    if (cols.has(name)) continue;
+    try { await db.prepare(`ALTER TABLE user_ai_usage ADD COLUMN ${name} ${type}`).run(); }
+    catch (e) { // a concurrent isolate added it first
+      const now = new Set((await db.prepare(`SELECT name FROM pragma_table_info('user_ai_usage')`).all<{ name: string }>()).results.map((r) => r.name));
+      if (!now.has(name)) throw e;
+    }
+  }
+  await db.prepare(`INSERT INTO app_meta (key, value, at) VALUES ('schema_version', '3', ?1) ON CONFLICT (key) DO UPDATE SET value = '3', at = ?1 WHERE CAST(app_meta.value AS INTEGER) < 3`)
+    .bind(new Date().toISOString()).run();
+}
+
 /** One atomic batch: marker first (a concurrent second run fails on its PRIMARY KEY and rolls back), then copies. */
 const MIGRATE_V1_TO_V2 = [
   `INSERT INTO app_meta (key, value, at) VALUES ('schema_version', '2', ?1)`,
@@ -83,7 +114,9 @@ async function schemaVersion(db: D1Database): Promise<number> {
 }
 
 export async function migrate(db: D1Database): Promise<void> {
-  if ((await schemaVersion(db)) >= 2) return;
+  const v = await schemaVersion(db);
+  if (v >= 3) return;
+  if (v === 2) return migrateV3(db);
   // CREATE ... IF NOT EXISTS only — safe to repeat; existing tables and rows are never touched.
   await db.batch([...APP_SCHEMA_V1, ...APP_SCHEMA_V2].map((s) => db.prepare(s)));
   const now = new Date().toISOString();
@@ -93,6 +126,7 @@ export async function migrate(db: D1Database): Promise<void> {
     // Another isolate migrated first (schema_version already present) → fine; anything else is a real error.
     if ((await schemaVersion(db)) < 2) throw e;
   }
+  await migrateV3(db);
 }
 
 let ready: Promise<void> | null = null;

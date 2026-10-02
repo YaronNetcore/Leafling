@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
-import { SPECIES, type Species } from "../../shared/species.ts";
-import { aiErrorText, askAi, picked, type AiResult } from "../data/ai.ts";
+import { matchCandidate } from "../../shared/catalog.ts";
+import { useCatalog } from "../data/catalog.ts";
+import { aiErrorText, askAi, carryIdentificationPhotos, picked, type AiResult } from "../data/ai.ts";
 import { prepareForUpload as prepareImages } from "../data/images.ts";
 import { PhotoPicker, usePhotoPicker as useFilePicker } from "../ui/PhotoPicker.tsx";
 import { openHealthCase, setStatus, speciesOf, usePhotos, usePlant, usePlants } from "../data/store.ts";
@@ -30,23 +31,19 @@ function ErrorBox({ code, onRetry }: { code: string; onRetry: () => void }) {
   );
 }
 
-function matchSpecies(scientific: string, he: string): Species | undefined {
-  const s = scientific.toLowerCase();
-  return SPECIES.find((x) => (s && (x.scientific.toLowerCase().startsWith(s.split(" ")[0]) && s.includes(x.scientific.toLowerCase().split(" ")[0]))) || x.he === he || x.aliases.includes(he));
-}
-
-/** Identify / pest ID / "What is this?" — shows alternatives when unsure; never fakes certainty. */
+/** Plant identification — shows alternatives when unsure; never fakes certainty. */
 export function Identify() {
   const nav = useNavigate();
   const [params] = useSearchParams();
-  const mode = (params.get("mode") as "identify" | "pest" | "what") ?? "identify";
+  const mode = "identify" as const;
   const picker = useFilePicker();
+  const catalog = useCatalog();
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState<AiResult | null>(null);
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { if (params.get("picked") && picked.files.length) { picker.add(picked.files); picked.files = []; } }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  const titles = { identify: ["זיהוי צמח", "צלמי את הצמח — עדיף צילום של הצמח כולו ועוד צילום קרוב של עלה."], pest: ["זיהוי מזיקים", "צילום קרוב וחד של המזיק או הסימן."], what: ["מה זה הדבר הזה?", "צמח, פטרייה, חרק או כתם — נעזור להבין מה רואים."] }[mode];
+  const titles = ["זיהוי צמח", "צלמי את הצמח — עדיף צילום של הצמח כולו ועוד צילום קרוב של עלה."];
   const [stage, setStage] = useState<"prep" | "ask" | null>(null);
   const run = async () => {
     if (!picker.files.length) return;
@@ -69,61 +66,30 @@ export function Identify() {
         <>
           <AiResultView r={res} candidatesTitle={mode === "identify" ? "מועמדים לזיהוי" : "אפשרויות"} />
           {mode === "identify" && res.candidates.map((c, i) => {
-            const sp = matchSpecies(c.scientific, c.name_he);
+            const m = matchCandidate(c.scientific, c.name_he, catalog?.entries ?? []);
+            const add = (url: string) => { carryIdentificationPhotos(picker.files); nav(url); };
             return (
-              <div key={i} className="flex gap-2">
-                {sp ? <>
-                  <Button size="md" variant="secondary" className="flex-1" onClick={() => nav(`/find/species/${sp.id}`)}>{sp.he} — לעמוד הזן</Button>
-                  <Button size="md" onClick={() => nav(`/plants/new?species=${sp.id}`)}>הוספה</Button>
-                </> : <Button size="md" variant="secondary" className="w-full" onClick={() => nav(`/plants/new?name=${encodeURIComponent(c.name_he)}&sci=${encodeURIComponent(c.scientific)}`)}>הוספה בשם "{c.name_he}"</Button>}
+              <div key={i} className="space-y-1.5 rounded-2xl bg-surface p-3 shadow-soft" data-testid="identify-candidate">
+                <div className="text-[15px] font-semibold text-ink">{c.name_he} <span className="sci text-[14px] font-normal text-muted">{c.scientific}</span></div>
+                {m ? (
+                  <>
+                    {m.level === "genus" && <p className="text-[13px] text-muted">במאגר יש עמוד כללי לסוג ({m.he}) — לא לזן המדויק.</p>}
+                    <div className="flex gap-2">
+                      <Button size="md" variant="secondary" className="flex-1" onClick={() => nav(`/find/species/${m.id}`)}>{m.he} — לעמוד הזן</Button>
+                      <Button size="md" data-testid="identify-add" onClick={() => add(m.level === "genus" ? `/plants/new?name=${encodeURIComponent(c.name_he)}&sci=${encodeURIComponent(c.scientific)}&from=identify` : `/plants/new?species=${m.id}&from=identify`)}>הוספה</Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-[13px] text-muted" data-testid="identify-not-in-catalog">זוהה ע״י AI — הזן עוד לא במאגר של Leafling, אבל אפשר להמשיך איתו. הזיהוי אינו מידע בוטני מאומת.</p>
+                    <Button size="md" variant="secondary" className="w-full" data-testid="identify-add" onClick={() => add(`/plants/new?name=${encodeURIComponent(c.name_he)}&sci=${encodeURIComponent(c.scientific)}&from=identify`)}>הוספה בשם "{c.name_he}"</Button>
+                  </>
+                )}
               </div>
             );
           })}
         </>
       )}
-      <div className="h-8" />
-    </Frame>
-  );
-}
-
-/** AI Botanist: general chat, or scoped to exactly one selected plant. */
-export function Botanist() {
-  const [params] = useSearchParams();
-  const plants = (usePlants() ?? []).filter((p) => !p.archivedAt);
-  const [plantId, setPlantId] = useState(params.get("plant") ?? "");
-  const plant = plants.find((p) => p.id === plantId);
-  const picker = useFilePicker();
-  const [q, setQ] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [thread, setThread] = useState<{ q: string; r?: AiResult; err?: string }[]>([]);
-  const run = async () => {
-    const question = q.trim();
-    if (!question) return;
-    setBusy(true);
-    const entry: { q: string; r?: AiResult; err?: string } = { q: question };
-    try { entry.r = await askAi({ mode: "ask", plantId: plantId || undefined, question, images: await prepareImages(picker.files) }); setQ(""); picker.clear(); }
-    catch (e) { entry.err = (e as Error).message; }
-    setThread((t) => [entry, ...t]);
-    setBusy(false);
-  };
-  return (
-    <Frame title="AI Botanist" subtitle={plant ? `מכיר את ${displayName(plant)} ואת ההיסטוריה שלו` : "שאלה כללית, או בחרי צמח כדי לקבל תשובה מותאמת"}>
-      <Field label="על איזה צמח?">
-        <Select icon="pot" value={plantId} onChange={(e) => setPlantId(e.target.value)}>
-          <option value="">שאלה כללית (בלי צמח אישי)</option>
-          {plants.map((p) => <option key={p.id} value={p.id}>{displayName(p)}</option>)}
-        </Select>
-      </Field>
-      {plant && <div className="flex items-center gap-3 rounded-2xl bg-sage/70 p-3"><PlantImage plant={plant} species={speciesOf(plant)} className="size-12" /><p className="text-[13px] text-muted">נשלח רק מידע מובנה על הצמח הזה (סטטוס, מיקום, היסטוריה אחרונה). צמחים אחרים לא נשלחים.</p></div>}
-      <Textarea rows={3} placeholder="למשל: למה העלים התחתונים מצהיבים?" value={q} onChange={(e) => setQ(e.target.value)} />
-      <PhotoPicker picker={picker} />
-      <Button icon="sparkles" loading={busy} disabled={!q.trim()} onClick={run} className="w-full">שליחה</Button>
-      {thread.map((t, i) => (
-        <div key={i} className="space-y-2">
-          <div className="ms-auto max-w-[85%] rounded-2xl rounded-ee-md bg-green px-4 py-3 text-[15px] text-on-green">{t.q}</div>
-          {t.r ? <AiResultView r={t.r} /> : <ErrorBox code={t.err ?? "x"} onRetry={() => { setQ(t.q); }} />}
-        </div>
-      ))}
       <div className="h-8" />
     </Frame>
   );

@@ -1,7 +1,11 @@
 import { useMemo, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
-import { searchSpecies, speciesById, SPECIES } from "../../shared/species.ts";
+import { searchAll } from "../../shared/catalog.ts";
+import { speciesById, SPECIES } from "../../shared/species.ts";
+import { useCatalog } from "../data/catalog.ts";
+import { CatalogArt } from "../ui/CatalogArt.tsx";
+import { CatalogSpeciesPage } from "./CatalogSpecies.tsx";
 import { picked } from "../data/ai.ts";
 import { addToWishlist, usePlants, useWishlist } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
@@ -10,7 +14,7 @@ import { SpeciesTabs } from "./SpeciesCare.tsx";
 
 const CATS = [
   { id: "all", label: "הכול" }, { id: "houseplant", label: "צמחי בית" }, { id: "herb", label: "עשבי תיבול" },
-  { id: "vegetable", label: "ירקות" }, { id: "succulent", label: "סוקולנטים" }, { id: "flower", label: "פורחים" }, { id: "outdoor", label: "גינה" },
+  { id: "vegetable", label: "ירקות" }, { id: "fruit", label: "פירות" }, { id: "succulent", label: "סוקולנטים" }, { id: "flower", label: "פורחים" }, { id: "outdoor", label: "גינה" },
 ];
 
 /** Find Plant: name search + camera + gallery in one screen. Searches species names, never personal nicknames. */
@@ -20,7 +24,10 @@ export default function FindPlant() {
   const [cat, setCat] = useState("all");
   const camRef = useRef<HTMLInputElement>(null);
   const libRef = useRef<HTMLInputElement>(null);
-  const results = useMemo(() => searchSpecies(q).filter((s) => cat === "all" || s.category === cat), [q, cat]);
+  const catalog = useCatalog();
+  const all = useMemo(() => searchAll(q, catalog?.entries ?? []).filter((s) => cat === "all" || s.category === cat), [q, cat, catalog]);
+  const [limit, setLimit] = useState(40);
+  const results = all.slice(0, limit);
   const go = (files: FileList | null) => { if (files?.length) { picked.files = Array.from(files); nav("/identify?picked=1"); } };
   return (
     <div>
@@ -38,14 +45,15 @@ export default function FindPlant() {
           <div className="mt-4 grid grid-cols-2 gap-3">
             {results.map((s) => (
               <Card key={s.id} as="button" onClick={() => nav(`/find/species/${s.id}`)} className="rise p-2">
-                <SpeciesImage species={s} className="aspect-[7/5] w-full" />
-                <div className="px-1.5 pt-2 text-[17px] font-bold text-ink">{s.he}</div>
+                {s.kind === "curated" ? <SpeciesImage species={speciesById(s.id)} className="aspect-[7/5] w-full" /> : <CatalogArt group={s.group} image={s.image} className="aspect-[7/5] w-full" />}
+                <div className="px-1.5 pt-2 text-[17px] font-bold leading-tight text-ink" data-testid="species-result">{s.he}</div>
                 <div className="px-1.5 pb-1 text-[13px]"><span className="sci text-muted">{s.scientific}</span></div>
               </Card>
             ))}
           </div>
         )}
-        <p className="mt-4 text-center text-[13px] text-muted">{SPECIES.length} זנים במאגר הכללי · מידע כללי שמסומן כלא מאומת</p>
+        {all.length > limit && <Button variant="secondary" className="mt-3 w-full" onClick={() => setLimit((l) => l + 40)}>עוד תוצאות ({all.length - limit})</Button>}
+        <p className="mt-4 text-center text-[13px] text-muted" data-testid="catalog-count">{SPECIES.length + (catalog?.entries.length ?? 0)} צמחים במאגר הכללי · מידע כללי שמסומן כלא מאומת</p>
       </div>
     </div>
   );
@@ -59,6 +67,7 @@ export function SpeciesPage() {
   const sp = speciesById(id);
   const plants = usePlants() ?? [];
   const wishlist = useWishlist() ?? [];
+  if (!sp && id) return <CatalogSpeciesPage id={id} />;
   if (!sp) return <EmptyState title="הזן לא נמצא" action={<Button onClick={() => nav("/find")} className="w-full">חזרה לחיפוש</Button>} />;
   const mine = plants.filter((p) => p.speciesId === sp.id && !p.archivedAt);
   const inWishlist = wishlist.some((w) => w.speciesId === sp.id);

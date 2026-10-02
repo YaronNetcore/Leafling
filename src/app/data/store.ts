@@ -64,6 +64,8 @@ export async function postpone(plantId: string, task: string, days: number) {
 export interface NewPlantInput {
   species: Species | null;
   customName?: { he: string; scientific?: string };
+  /** Catalog species (public/catalog) when the plant is not one of the curated species. */
+  catalogId?: string | null;
   status: Status;
   nickname?: string;
   locationId?: string | null;
@@ -86,11 +88,11 @@ export interface NewPlantInput {
 
 export async function createPlant(input: NewPlantInput): Promise<Plant> {
   const all = await db.plants.toArray(); // includes deleted: ordinals are never reused
-  const speciesKey = input.species?.id ?? input.customName?.scientific ?? input.customName?.he ?? "unknown";
+  const speciesKey = input.species?.id ?? input.catalogId ?? input.customName?.scientific ?? input.customName?.he ?? "unknown";
   const id = crypto.randomUUID();
   const plant = await mutate<Plant>("plant", id, {
     id, createdAt: nowIso(),
-    speciesId: input.species?.id ?? null,
+    speciesId: input.species?.id ?? input.catalogId ?? null,
     scientificName: input.species?.scientific ?? input.customName?.scientific ?? "",
     commonName: input.species?.he ?? input.customName?.he ?? "צמח",
     ordinal: nextOrdinal(all.map((p) => ({ ...p, speciesId: p.speciesId ?? p.scientificName ?? p.commonName })), speciesKey),

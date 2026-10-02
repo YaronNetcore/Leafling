@@ -16,6 +16,8 @@ import {
   SectionTitle, Select, Sheet, StatusBadge, TabRow, Textarea, cx, useToast,
 } from "../ui/ui.tsx";
 import { CareSummary, ProblemsPanel, PropagationPanel, SafetyPanel } from "./SpeciesCare.tsx";
+import { useCatalog } from "../data/catalog.ts";
+import { CatalogCare } from "./CatalogSpecies.tsx";
 
 type Tab = "care" | "journal" | "history" | "health" | "about";
 const TABS: { id: Tab; label: string; icon: IconName }[] = [
@@ -87,8 +89,10 @@ export function SoilCheckSheet({ p, open, onClose }: { p: Plant; open: boolean; 
 // ---------- Care tab ----------
 function CareTab({ p, events, onSoil, onNote, onMove, onReminder }: { p: Plant; events: PlantEvent[]; onSoil: () => void; onNote: () => void; onMove: () => void; onReminder: () => void }) {
   const nav = useNavigate();
+  const catalog = useCatalog();
   const toast = useToast();
   const sp = speciesOf(p);
+  const catalogEntry = !sp && p.speciesId ? catalog?.byId.get(p.speciesId) : undefined;
   const now = Date.now();
   const plan = soilCheckPlan(p, events, sp, now);
   const fert = fertilizePlan(p, events, sp, now);
@@ -183,7 +187,7 @@ function CareTab({ p, events, onSoil, onNote, onMove, onReminder }: { p: Plant; 
         </dl>
       </Card>
 
-      {sp ? <CareSummary sp={sp} /> : <InfoNote title="אין מידע כללי על הזן">הצמח לא משויך לזן מהמאגר, לכן ההמלצות יתבססו על ההיסטוריה שלו בלבד.</InfoNote>}
+      {sp ? <CareSummary sp={sp} /> : catalogEntry ? <CatalogCare e={catalogEntry} /> : <InfoNote title="אין מידע כללי על הזן">הצמח לא משויך לזן מהמאגר, לכן ההמלצות יתבססו על ההיסטוריה שלו בלבד.</InfoNote>}
     </div>
   );
 }

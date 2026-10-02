@@ -1,10 +1,15 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { STATUS_LABEL } from "../../shared/domain.ts";
-import { lightFit, searchSpecies, speciesById, SPECIES, type Species } from "../../shared/species.ts";
+import { searchAll } from "../../shared/catalog.ts";
+import { lightFit, speciesById, SPECIES, type Species } from "../../shared/species.ts";
+import { useCatalog } from "../data/catalog.ts";
+import { CatalogArt } from "../ui/CatalogArt.tsx";
 import type { Status } from "../../shared/types.ts";
 import { db } from "../data/db.ts";
-import { addPhoto } from "../data/media.ts";
+import { takeIdentificationPhotos } from "../data/ai.ts";
+import { makePreview } from "../data/images.ts";
+import { addPhoto, addPhotosOnce } from "../data/media.ts";
 import { createLocation, createPlant, markPurchased, useLocations, type NewPlantInput } from "../data/store.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { BackButton, Button, Chip, Field, InfoNote, Input, Select, SpeciesImage, Textarea, cx, useToast } from "../ui/ui.tsx";
@@ -42,7 +47,31 @@ export default function AddPlant() {
   const [saving, setSaving] = useState(false);
   const camRef = useRef<HTMLInputElement>(null);
   const libRef = useRef<HTMLInputElement>(null);
-  const results = useMemo(() => searchSpecies(q).slice(0, 30), [q]);
+  const catalog = useCatalog();
+  const results = useMemo(() => searchAll(q, catalog?.entries ?? []).slice(0, 30), [q, catalog]);
+  // A catalog species (not one of the curated ones): kept as name + scientific name + its catalog id.
+  const [catalogId, setCatalogId] = useState<string | null>(null);
+  const presetCatalog = !preset && params.get("species") ? catalog?.byId.get(params.get("species")!) : undefined;
+  useEffect(() => {
+    if (presetCatalog && !catalogId) { setCatalogId(presetCatalog.id); setCustom({ he: presetCatalog.he, scientific: presetCatalog.scientific }); setStep((s) => (s === "species" ? "photo" : s)); }
+  }, [presetCatalog]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Originals from the identification that led here (memory only until the plant is saved).
+  const [carried, setCarried] = useState<{ file: File; preview: string | null }[]>([]);
+  const [mainIdx, setMainIdx] = useState(0);
+  useEffect(() => {
+    if (params.get("from") !== "identify") return;
+    const files = takeIdentificationPhotos();
+    if (!files.length) return;
+    setCarried(files.map((file) => ({ file, preview: null })));
+    files.forEach((file, i) => void makePreview(file).then((url) => setCarried((cur) => cur.map((c, j) => (j === i && c.file === file ? { ...c, preview: url } : c))), () => undefined));
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  const carriedRef = useRef(carried);
+  carriedRef.current = carried;
+  useEffect(() => () => carriedRef.current.forEach((c) => c.preview && URL.revokeObjectURL(c.preview)), []);
+  const dropCarried = (i: number) => {
+    setCarried((cur) => { const c = cur[i]; if (c?.preview) URL.revokeObjectURL(c.preview); return cur.filter((_, j) => j !== i); });
+    setMainIdx((m) => (i === m ? 0 : i < m ? m - 1 : m));
+  };
 
   const pick = (f: File | undefined) => { if (!f) return; setPhoto(f); setPreview(URL.createObjectURL(f)); setStep("status"); };
   const statuses = wishlistId ? STATUS_CARDS.filter((s) => s.id !== "sick") : STATUS_CARDS;
@@ -58,10 +87,11 @@ export default function AddPlant() {
       if (locationId === "__new" && !newLoc.trim()) locId = null;
       const today = new Date().toISOString().slice(0, 10);
       const plant = await createPlant({
-        ...d, species, customName: species ? undefined : { he: custom.he.trim() || "צמח", scientific: custom.scientific.trim() || undefined },
+        ...d, species, catalogId: species ? null : catalogId, customName: species ? undefined : { he: custom.he.trim() || "צמח", scientific: custom.scientific.trim() || undefined },
         status, nickname, locationId: locId,
         acquiredAt: status === "plant" || status === "sick" ? (acq === "today" ? today : acq === "date" ? acqDate || null : null) : (d.acquiredAt ?? null),
       });
+      if (carried.length) await addPhotosOnce(plant.id, carried.map((c) => c.file), photo ? -1 : Math.min(mainIdx, carried.length - 1));
       if (photo) await addPhoto(plant.id, photo, { setMain: true });
       if (wishlistId) {
         const w = await db.wishlist.get(wishlistId);
@@ -84,6 +114,7 @@ export default function AddPlant() {
       </div>
       <h1 className="mt-4 text-center text-[28px] font-bold text-ink">{title}</h1>
       {species && step !== "species" && <p className="mt-1 text-center text-[16px] text-muted">{species.he} · <span className="sci">{species.scientific}</span></p>}
+      {!species && custom.he && step !== "species" && <p className="mt-1 text-center text-[16px] text-muted" data-testid="add-plant-name">{custom.he}{custom.scientific && <> · <span className="sci">{custom.scientific}</span></>}</p>}
 
       {step === "species" && (
         <div className="rise mt-4 space-y-3">
@@ -91,8 +122,12 @@ export default function AddPlant() {
           <Button variant="secondary" icon="camera" className="w-full" onClick={() => nav("/identify?add=1")}>לא יודעת — לזהות לפי תמונה</Button>
           <div className="grid grid-cols-2 gap-3">
             {results.map((s) => (
-              <button key={s.id} onClick={() => { setSpecies(s); setStep("photo"); }} className="pressable rounded-card bg-surface p-2 text-start shadow-soft">
-                <SpeciesImage species={s} className="aspect-[7/5] w-full" />
+              <button key={s.id} onClick={() => {
+                if (s.kind === "curated") { setSpecies(speciesById(s.id)!); setCatalogId(null); }
+                else { setSpecies(null); setCatalogId(s.id); setCustom({ he: s.he, scientific: s.scientific }); }
+                setStep("photo");
+              }} className="pressable rounded-card bg-surface p-2 text-start shadow-soft">
+                {s.kind === "curated" ? <SpeciesImage species={speciesById(s.id)} className="aspect-[7/5] w-full" /> : <CatalogArt group={s.group} image={s.image} className="aspect-[7/5] w-full" />}
                 <div className="px-1 pt-2 text-[16px] font-bold text-ink">{s.he}</div>
                 <div className="px-1 pb-1 text-[13px]"><span className="sci text-muted">{s.scientific}</span></div>
               </button>
@@ -103,7 +138,7 @@ export default function AddPlant() {
             <div className="mt-2 space-y-2">
               <Input placeholder="שם הצמח בעברית" value={custom.he} onChange={(e) => setCustom({ ...custom, he: e.target.value })} />
               <Input placeholder="שם מדעי (אופציונלי)" dir="ltr" value={custom.scientific} onChange={(e) => setCustom({ ...custom, scientific: e.target.value })} />
-              <Button size="md" className="w-full" disabled={!custom.he.trim()} onClick={() => { setSpecies(null); setStep("photo"); }}>המשך עם השם הזה</Button>
+              <Button size="md" className="w-full" disabled={!custom.he.trim()} onClick={() => { setSpecies(null); setCatalogId(null); setStep("photo"); }}>המשך עם השם הזה</Button>
             </div>
           </div>
           {!q && SPECIES.length > 0 && <p className="text-center text-[13px] text-muted">המאגר הכללי מתרחב בהדרגה.</p>}
@@ -112,23 +147,44 @@ export default function AddPlant() {
 
       {step === "photo" && (
         <div className="rise mt-6 space-y-3">
-          <div className="grid aspect-[4/3] place-items-center overflow-hidden rounded-card bg-sage">
-            {species ? <SpeciesImage species={species} className="size-full" /> : <Icon name="camera" size={56} className="text-green" />}
-          </div>
-          <p className="text-center text-[15px] text-muted">תמונה של הצמח שלך נכנסת ליומן ולטיימלאפס. אפשר גם לדלג — תוצג תמונת זן מסומנת.</p>
+          {carried.length > 0 ? (
+            <div data-testid="carried-photos" className="space-y-2">
+              <div className="grid grid-cols-2 gap-2">
+                {carried.map((c, i) => (
+                  <div key={i} className="relative">
+                    <button type="button" onClick={() => setMainIdx(i)} aria-pressed={i === mainIdx} aria-label={i === mainIdx ? "תמונה ראשית" : "לבחור כתמונה ראשית"}
+                      className={cx("pressable block aspect-square w-full overflow-hidden rounded-2xl bg-sage", i === mainIdx && !photo && "ring-4 ring-green")}>
+                      {c.preview ? <img src={c.preview} alt="" className="size-full object-cover" /> : <Icon name="image" size={32} className="m-auto text-green" />}
+                    </button>
+                    {i === mainIdx && !photo && <span className="absolute start-2 top-2 rounded-full bg-green px-2 py-0.5 text-[12px] font-semibold text-on-green">ראשית</span>}
+                    <button type="button" onClick={() => dropCarried(i)} aria-label="לא לשמור את התמונה הזו" className="pressable absolute end-2 top-2 grid size-8 place-items-center rounded-full bg-surface/90 text-ink shadow-soft"><Icon name="x" size={16} /></button>
+                  </div>
+                ))}
+              </div>
+              <p className="text-center text-[15px] text-muted">התמונות מהזיהוי יישמרו בצמח כמו שהן (המקור לא משתנה). אפשר לבחור תמונה ראשית או להסיר תמונה.</p>
+              <Button className="w-full" data-testid="carried-continue" onClick={() => setStep("status")}>המשך עם התמונות האלה</Button>
+            </div>
+          ) : (
+            <>
+              <div className="grid aspect-[4/3] place-items-center overflow-hidden rounded-card bg-sage">
+                {species ? <SpeciesImage species={species} className="size-full" /> : <Icon name="camera" size={56} className="text-green" />}
+              </div>
+              <p className="text-center text-[15px] text-muted">תמונה של הצמח שלך נכנסת ליומן ולטיימלאפס. אפשר גם לדלג — תוצג תמונת זן מסומנת.</p>
+            </>
+          )}
           <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => pick(e.target.files?.[0])} />
           <input ref={libRef} type="file" accept="image/*" hidden onChange={(e) => pick(e.target.files?.[0])} />
           <div className="grid grid-cols-2 gap-3">
             <Button icon="camera" onClick={() => camRef.current?.click()}>מצלמה</Button>
             <Button variant="secondary" icon="image" onClick={() => libRef.current?.click()}>גלריה</Button>
           </div>
-          <Button variant="text" className="w-full" onClick={() => setStep("status")}>דלגי בינתיים</Button>
+          {!carried.length && <Button variant="text" className="w-full" onClick={() => setStep("status")}>דלגי בינתיים</Button>}
         </div>
       )}
 
       {step === "status" && (
         <div className="rise mt-6 space-y-3">
-          {preview && <img src={preview} alt="" className="mx-auto aspect-square w-32 rounded-card object-cover shadow-soft" />}
+          {(preview ?? carried[mainIdx]?.preview) && <img src={(preview ?? carried[mainIdx]?.preview)!} alt="" className="mx-auto aspect-square w-32 rounded-card object-cover shadow-soft" />}
           {statuses.map((s) => (
             <button key={s.id} onClick={() => { setStatus(s.id); setStep("details"); }} aria-pressed={status === s.id}
               className={cx("pressable flex w-full items-center gap-4 rounded-card p-4 text-start shadow-soft", status === s.id ? "bg-sage ring-2 ring-green/70" : "bg-surface")}>

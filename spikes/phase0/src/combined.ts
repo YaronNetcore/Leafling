@@ -8,7 +8,7 @@ import spike from "./worker.ts";
 export default {
   async fetch(req: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(req.url);
-    const app = await handleApp(req, env, url);
+    const app = await handleApp(req, env, url, ctx);
     if (app) return app;
     return spike.fetch(req, env, ctx);
   },

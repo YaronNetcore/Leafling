@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { displayName, relativeDays, soilCheckPlan } from "../../shared/domain.ts";
 import { LIGHT_LABEL, SPECIES, speciesById } from "../../shared/species.ts";
@@ -8,7 +8,8 @@ import { BackButton, Button, Card, Chip, Field, InfoNote, Input, PageHeader, Sel
 import LightMeter from "./LightMeter.tsx";
 import { PropagationPanel } from "./SpeciesCare.tsx";
 
-// Exactly the ten core tools (PRODUCT_SPEC §35).
+// Core tools. Pest identification, "what is this?" and the substrate-mix builder were removed as standalone
+// tools (owner request 2026-10): Diagnose identifies pests, and AI Botanist answers pest and substrate questions.
 const TOOLS: { id: string; label: string; sub: string; icon: IconName; to: string; tone: string }[] = [
   { id: "light", label: "מד אור", sub: "הערכת אור עם המצלמה", icon: "sun", to: "/tools/light", tone: "bg-sun-bg text-sun" },
   { id: "watering", label: "עוזר השקיה", sub: "מתי לבדוק אדמה", icon: "drop", to: "/tools/watering", tone: "bg-water-bg text-water" },
@@ -17,9 +18,6 @@ const TOOLS: { id: string; label: string; sub: string; icon: IconName; to: strin
   { id: "sowing", label: "עוזר זריעה", sub: "איך ומתי לזרוע", icon: "seed", to: "/tools/sowing", tone: "bg-sun-bg text-soil" },
   { id: "propagation", label: "עוזר השרשה", sub: "ייחורים צעד־צעד", icon: "scissors", to: "/tools/propagation", tone: "bg-water-bg text-water" },
   { id: "repot", label: "מדריך העברת עציץ", sub: "לפי הסיבה", icon: "move", to: "/tools/repot", tone: "bg-soil-bg text-soil" },
-  { id: "pest", label: "זיהוי מזיקים", sub: "לפי תמונה", icon: "bug", to: "/identify?mode=pest", tone: "bg-heat-bg text-heat" },
-  { id: "what", label: "מה זה הדבר הזה?", sub: "כשלא בטוחים מה רואים", icon: "help", to: "/identify?mode=what", tone: "bg-sage text-green" },
-  { id: "soil", label: "בונה תערובת מצע", sub: "מהחומרים שיש לך", icon: "layers", to: "/tools/soil", tone: "bg-soil-bg text-soil" },
 ];
 
 export default function Tools() {
@@ -189,40 +187,6 @@ function Repot() {
   );
 }
 
-const MATERIALS = [
-  { id: "potting", label: "מצע עציצים כללי", drain: 1, air: 1, hold: 3 }, { id: "perlite", label: "פרלייט", drain: 3, air: 3, hold: 0 },
-  { id: "bark", label: "קליפות אורן", drain: 2, air: 3, hold: 1 }, { id: "coco", label: "סיבי קוקוס", drain: 1, air: 2, hold: 3 },
-  { id: "pumice", label: "פומיס / טוף", drain: 3, air: 2, hold: 1 }, { id: "sand", label: "חול גס", drain: 3, air: 1, hold: 0 },
-  { id: "compost", label: "קומפוסט", drain: 0, air: 1, hold: 3 }, { id: "leca", label: "לקה", drain: 3, air: 3, hold: 0 },
-];
-const NEEDS = { drain: "ניקוז מהיר (סוקולנטים)", air: "אוורור (אראונים, מונסטרה)", hold: "שימור לחות (עשבים, ירקות)" } as const;
-
-function SoilMix() {
-  const [need, setNeed] = useState<keyof typeof NEEDS>("air");
-  const [have, setHave] = useState<string[]>(["potting", "perlite"]);
-  const mix = useMemo(() => {
-    const avail = MATERIALS.filter((m) => have.includes(m.id));
-    if (!avail.length) return [];
-    const base = avail.find((m) => m.hold >= 3);
-    const scored = avail.map((m) => ({ m, s: m[need] + (m === base ? 1.5 : 0) })).filter((x) => x.s > 0).sort((a, b) => b.s - a.s).slice(0, 3);
-    const total = scored.reduce((a, b) => a + b.s, 0);
-    return scored.map((x) => ({ label: x.m.label, parts: Math.max(1, Math.round((x.s / total) * 6)) }));
-  }, [need, have]);
-  return (
-    <ToolFrame title="בונה תערובת מצע" subtitle="רק מהחומרים שכבר יש לך — בלי רשימת קניות.">
-      <Field label="מה הצמח צריך?"><div className="flex flex-wrap gap-2">{(Object.keys(NEEDS) as (keyof typeof NEEDS)[]).map((k) => <Chip key={k} selected={need === k} onClick={() => setNeed(k)}>{NEEDS[k]}</Chip>)}</div></Field>
-      <Field label="מה יש לך?"><div className="flex flex-wrap gap-2">{MATERIALS.map((m) => <Chip key={m.id} selected={have.includes(m.id)} onClick={() => setHave((h) => (h.includes(m.id) ? h.filter((x) => x !== m.id) : [...h, m.id]))}>{m.label}</Chip>)}</div></Field>
-      {mix.length > 0 && (
-        <Card className="p-4">
-          <h2 className="text-[17px] font-bold text-ink">תערובת מוצעת</h2>
-          <ul className="mt-2 space-y-1.5">{mix.map((x) => <li key={x.label} className="flex justify-between rounded-xl bg-bg-soft px-3 py-2 text-[15px]"><span className="text-ink">{x.label}</span><span className="font-semibold text-green">{x.parts} חלקים</span></li>)}</ul>
-          <p className="mt-2 text-[13px] text-muted">הערכה כללית. לצמחים מסוימים כדאי לבדוק גם בעמוד הזן.</p>
-        </Card>
-      )}
-    </ToolFrame>
-  );
-}
-
 export function ToolPage() {
   const { tool } = useParams();
   switch (tool) {
@@ -233,7 +197,6 @@ export function ToolPage() {
     case "sowing": return <Sowing />;
     case "propagation": return <Propagation />;
     case "repot": return <Repot />;
-    case "soil": return <SoilMix />;
     default: return <Tools />;
   }
 }

@@ -6,7 +6,7 @@ export type LightCat = "low" | "medium" | "bright_indirect" | "direct";
 export type Confidence = "known" | "likely" | "possible" | "insufficient";
 export type DatePrecision = "exact" | "day" | "unknown";
 
-export type Entity = "plant" | "event" | "location" | "light" | "photo" | "wishlist" | "health" | "profile" | "reminder";
+export type Entity = "plant" | "event" | "location" | "light" | "photo" | "wishlist" | "health" | "profile" | "reminder" | "chat" | "message";
 
 export interface BaseRecord {
   id: string;
@@ -155,6 +155,32 @@ export interface Profile extends BaseRecord {
   onboardingDone: boolean;
   welcomeSeen?: boolean;
   theme?: "system" | "light" | "dark";
+}
+
+/**
+ * AI Botanist conversation (one per plant, or general). Written by the server when a message is sent; the
+ * client may only rename or delete it (deletedAt). Belongs to the signed-in user like every record.
+ */
+export interface Chat extends BaseRecord {
+  plantId: string | null;
+  title: string;
+  lastMessageAt: string;
+}
+
+/**
+ * One chat message. Written ONLY by the server (the client cannot push "message" records), so an answer is
+ * stored exactly once: id of the answer = `${userMessageId}-a`. `status` is honest about interrupted answers.
+ */
+export interface ChatMessage extends BaseRecord {
+  chatId: string;
+  plantId: string | null;
+  role: "user" | "assistant";
+  text: string;
+  at: string;
+  status: "complete" | "partial";
+  /** Number of images attached to this (user) message; served from R2 via /api/v1/chat/attachments. */
+  attachments?: number;
+  replyTo?: string;
 }
 
 export interface Mutation {

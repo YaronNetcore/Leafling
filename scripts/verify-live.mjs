@@ -92,7 +92,9 @@ info("AI monthly budget (USD)", binding("AI_BUDGET_USD")?.text ?? "(unset)");
 // 4. D1
 const tables = (await sql(`SELECT name FROM sqlite_master WHERE type='table'`)).map((r) => r.name);
 const meta = Object.fromEntries((tables.includes("app_meta") ? await sql(`SELECT key, value, at FROM app_meta`) : []).map((r) => [r.key, r]));
-ok("migration v2 applied", meta.schema_version?.value === "2", meta.schema_version ? `at ${meta.schema_version.at}` : "not yet — runs on the first signed-in API request");
+const v3 = Number(meta.schema_version?.value ?? 0) >= 3;
+ok("multi-user migration (v2+) applied", Number(meta.schema_version?.value ?? 0) >= 2, meta.schema_version ? `schema ${meta.schema_version.value} at ${meta.schema_version.at}` : "not yet — runs on the first signed-in API request");
+  info("chat schema (v3)", Number(meta.schema_version?.value ?? 0) >= 3 ? "applied" : "not yet — runs on the first signed-in API request after deploy");
 if (meta.schema_version) {
   const v1Count = (await sql(`SELECT COUNT(*) AS n FROM app_records`))[0].n;
   ok("all original rows were copied", Number(meta.legacy_copied_records?.value) <= v1Count, `copied ${meta.legacy_copied_records?.value}, v1 table now ${v1Count}`);
@@ -121,7 +123,7 @@ if (meta.schema_version) {
   info("users", users.map((u, i) => `#${i + 1}${u.id === owner ? " (original owner)" : ""}: ${u.n} records`).join("; ") || "none yet");
   const orphan = (await sql(`SELECT COUNT(*) AS n FROM user_records WHERE user_id NOT IN (SELECT id FROM app_users) AND user_id <> '__legacy__'`))[0].n;
   ok("every personal row belongs to a known user", orphan === 0, String(orphan));
-  for (const t of ["user_changes", "user_mutations", "user_conflicts", "user_ai_usage"]) {
+  for (const t of ["user_changes", "user_mutations", "user_conflicts", "user_ai_usage", ...(v3 ? ["user_chat_runs"] : [])]) {
     const n = (await sql(`SELECT COUNT(*) AS n FROM ${t} WHERE user_id NOT IN (SELECT id FROM app_users) AND user_id <> '__legacy__'`))[0].n;
     ok(`every ${t} row belongs to a known user`, n === 0, String(n));
   }
@@ -130,9 +132,9 @@ if (meta.schema_version) {
   const aiSince = active?.created_on ?? "1970-01-01";
   const ai = await sql(`SELECT feature, status, COUNT(*) AS n, SUM(image_count) AS imgs, MAX(at) AS last FROM user_ai_usage GROUP BY feature, status ORDER BY last DESC`);
   info("AI calls (all time)", ai.map((r) => `${r.feature}/${r.status}×${r.n}${r.imgs ? ` (${r.imgs} img)` : ""}`).join(", ") || "none yet");
-  for (const f of ["identify", "ask", "diagnose"]) {
-    const r = (await sql(`SELECT at, image_count, input_tokens, output_tokens, latency_ms, est_cost_usd, context_sections FROM user_ai_usage WHERE feature = ? AND status = 'ok' AND at >= ? ORDER BY at DESC LIMIT 1`, [f, aiSince]))[0];
-    info(`AI ${f} since the active deployment`, r ? `ok at ${r.at}: ${r.image_count} image(s), ${r.input_tokens}→${r.output_tokens} tokens, ${r.latency_ms} ms, $${Number(r.est_cost_usd).toFixed(4)}, context [${r.context_sections}]` : "no successful call yet");
+  for (const f of ["chat", "identify", "diagnose", "ask"]) {
+    const r = (await sql(`SELECT at, image_count, input_tokens, output_tokens, latency_ms, est_cost_usd, context_sections${v3 ? ", first_token_ms, context_chars" : ""} FROM user_ai_usage WHERE feature = ? AND status = 'ok' AND at >= ? ORDER BY at DESC LIMIT 1`, [f, aiSince]))[0];
+    info(`AI ${f} since the active deployment`, r ? `ok at ${r.at}: ${r.image_count} image(s), ${r.input_tokens}→${r.output_tokens} tokens, ${r.first_token_ms != null ? `first text ${r.first_token_ms} ms, ` : ""}total ${r.latency_ms} ms, context ${r.context_chars ?? "?"} chars, $${Number(r.est_cost_usd).toFixed(4)}, [${r.context_sections}]` : "no successful call yet");
   }
   const failed = await sql(`SELECT status, COUNT(*) AS n FROM user_ai_usage WHERE status <> 'ok' AND at >= ? GROUP BY status`, [aiSince]);
   if (failed.length) info("AI failures since the active deployment", failed.map((r) => `${r.status}×${r.n}`).join(", "));

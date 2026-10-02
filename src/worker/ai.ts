@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { AppEnv } from "./env.ts";
 import { HttpError, json, logEvent, readJson } from "./http.ts";
+import { detectTopics, loadPlantContext, type Topic } from "./ai-context.ts";
 import { readDisplayAsBase64, type PhotoOwner } from "./photos.ts";
 
 // Server-side Claude proxy (ARCHITECTURE §11–12).
@@ -12,7 +13,7 @@ import { readDisplayAsBase64, type PhotoOwner } from "./photos.ts";
 // - AI only answers/proposes; it has no write path to user data.
 // - Operational logging is metadata only (no prompt, answer or image content).
 
-const MODEL = { id: "claude-sonnet-5", inPerM: 2, outPerM: 10 } as const;
+export const MODEL = { id: "claude-sonnet-5", inPerM: 2, outPerM: 10 } as const;
 const MAX_IMAGES = 4;
 const MAX_IMAGE_B64 = 1_600_000;
 
@@ -55,80 +56,33 @@ const SYSTEM = `את/ה הבוטנאי/ת של Leafling — עוזר/ת אישי
 const MODE_PROMPT: Record<string, string> = {
   ask: "ענה/י על שאלת המשתמשת לגבי הצמח בהקשר הנתון. candidates יכול להיות ריק.",
   identify: "זהי את הצמח בתמונות. החזירי עד 3 מועמדים ב-candidates עם שם עברי ושם מדעי, מהסביר ביותר. אם לא בטוחה — הציגי חלופות ואל תזייפי ודאות.",
-  pest: "זהי את המזיק או הסימן בתמונה. ציני אם הוא מזיק לצמחים, על אילו צמחים, מה לבדוק ואיך לטפל. candidates = מועמדים לזיהוי המזיק.",
-  what: "המשתמשת לא בטוחה מה רואים בתמונה (צמח, פטרייה, חרק, סימן על עלה וכו'). תארי מה סביר שזה ומה כדאי לבדוק.",
-  diagnose: "בצעי אבחון של בעיה בצמח. בדקי קודם אם איכות התמונות מספיקה; בקשי צילום חוזר (retake_request) רק אם זה באמת נחוץ. החזירי סיבה סבירה, חלופות ב-candidates (name_he = שם הבעיה), ראיות, מידע חסר ודחיפות. אם יש חשד להדבקה — contagious_suspected=true.",
+  diagnose: "בצעי אבחון של בעיה בצמח, כולל זיהוי מזיקים אם רואים חרקים, ביצים, קורים או סימני כרסום. בדקי קודם אם איכות התמונות מספיקה; בקשי צילום חוזר (retake_request) רק אם זה באמת נחוץ. החזירי סיבה סבירה, חלופות ב-candidates (name_he = שם הבעיה), ראיות, מידע חסר ודחיפות. אם יש חשד להדבקה — contagious_suspected=true.",
 };
 
-interface PlantRow { [k: string]: unknown }
-
-async function buildPlantContext(env: AppEnv, userId: string, plantId: string, question: string) {
-  const sections: string[] = [];
-  const rec = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'plant' AND id = ?`).bind(userId, plantId).first<{ data: string }>();
-  if (!rec) throw new HttpError(404, "plant_not_found");
-  const p = JSON.parse(rec.data) as PlantRow;
-  if (p.deletedAt) throw new HttpError(404, "plant_not_found");
-  const ctx: Record<string, unknown> = {
-    plant: {
-      name: p.nickname || (Number(p.ordinal) > 1 ? `${p.commonName} #${p.ordinal}` : p.commonName),
-      species: { he: p.commonName, scientific: p.scientificName },
-      status: p.status, acquiredAt: p.acquiredAt ?? null, potDiameterCm: p.potDiameterCm ?? null, potMaterial: p.potMaterial ?? null,
-      substrate: p.substrate ?? null, sowDate: p.sowDate ?? null, seedCount: p.seedCount ?? null, germinatedCount: p.germinatedCount ?? null,
-      propagationMethod: p.propagationMethod ?? null, rootState: p.rootState ?? null,
-    },
-  };
-  sections.push("plant");
-  if (p.locationId) {
-    const loc = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'location' AND id = ?`).bind(userId, String(p.locationId)).first<{ data: string }>();
-    if (loc) { const l = JSON.parse(loc.data); ctx.location = { name: l.name, kind: l.kind, lightCategory: l.lightCategory ?? null, windowDirection: l.windowDirection ?? null, directSun: l.directSun ?? null }; sections.push("location"); }
-  }
-  const evRows = (await env.DB.prepare(
-    `SELECT data FROM user_records WHERE user_id = ? AND entity = 'event' AND json_extract(data, '$.plantId') = ? ORDER BY json_extract(data, '$.occurredAt') DESC LIMIT 40`,
-  ).bind(userId, plantId).all<{ data: string }>()).results;
-  const events = evRows.map((r) => JSON.parse(r.data)).filter((e) => !e.deletedAt)
-    .map((e) => ({ date: String(e.occurredAt).slice(0, 10), type: e.type, details: e.payload ?? {} }));
-  if (events.length) { ctx.recentHistory = events; sections.push("history"); }
-  const health = (await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'health' AND json_extract(data, '$.plantId') = ? ORDER BY rev DESC LIMIT 5`).bind(userId, plantId).all<{ data: string }>()).results
-    .map((r) => JSON.parse(r.data)).filter((h) => !h.deletedAt).map((h) => ({ title: h.title, state: h.state, likelyCause: h.likelyCause ?? null, source: h.source }));
-  if (health.length) { ctx.healthCases = health; sections.push("health"); }
-  // Light observations for THIS plant (or its location). Estimates are labelled as estimates, never as lux.
-  const lightRows = (await env.DB.prepare(
-    `SELECT data FROM user_records WHERE user_id = ? AND entity = 'light' AND (json_extract(data, '$.plantId') = ? OR (? IS NOT NULL AND json_extract(data, '$.locationId') = ?)) ORDER BY json_extract(data, '$.measuredAt') DESC LIMIT 6`,
-  ).bind(userId, plantId, p.locationId ? String(p.locationId) : null, p.locationId ? String(p.locationId) : null).all<{ data: string }>()).results
-    .map((r) => JSON.parse(r.data)).filter((l) => !l.deletedAt);
-  if (lightRows.length) {
-    ctx.lightObservations = lightRows.map((l) => ({
-      date: String(l.measuredAt).slice(0, 10), category: l.category, forThisPlant: l.plantId === plantId,
-      source: l.method === "camera_live_dark" ? "rough estimate: the live phone camera stayed dark at its sensitivity limit, i.e. a dim spot (NOT a calibrated light meter)"
-        : l.method === "camera_live_user" ? "user's own visual estimate of the spot (hand-shadow test), NOT a measurement"
-        : l.method === "camera_exposure" ? "rough estimate from phone camera exposure (NOT a calibrated light meter)"
-        : l.method === "user_choice" ? "user's own estimate" : l.method === "manual_lux" ? "external lux meter (user-entered)" : "older rough estimate",
-    }));
-    sections.push("light");
-  }
-  const prof = await env.DB.prepare(`SELECT data FROM user_records WHERE user_id = ? AND entity = 'profile' AND id = 'me'`).bind(userId).first<{ data: string }>();
-  if (prof) {
-    const pr = JSON.parse(prof.data);
-    ctx.user = { region: [pr.region, pr.country].filter(Boolean).join(", ") || null, experience: pr.experience ?? null };
-    // Pets: kinds with counts only (toxicity depends on the species of animal; names are not needed).
-    if (/חי|חתול|כלב|ציפור|ארנב|מכרסם|זוחל|רעיל|בטיח|pet|toxic/i.test(question) && Array.isArray(pr.pets)) {
-      const counts: Record<string, number> = {};
-      for (const x of pr.pets as { kind?: unknown }[]) if (typeof x?.kind === "string") counts[x.kind] = (counts[x.kind] ?? 0) + 1;
-      ctx.user = { ...(ctx.user as object), pets: Object.entries(counts).map(([kind, count]) => ({ kind, count })) };
-    }
-    sections.push("user");
-  }
-  return { ctx, sections };
-}
-
-async function callClaude(env: AppEnv, userId: string, feature: string, plantId: string | null, userText: string, images: string[], sections: string[]) {
+/** Key present, monthly budget not reached (one shared cap), per-user rate limit — in ONE D1 round trip. */
+export async function checkAiAllowed(env: AppEnv, userId: string, perTenMinutes = 20): Promise<void> {
   if (!env.ANTHROPIC_API_KEY) throw new HttpError(503, "ai_not_configured");
   const monthStart = new Date(Date.UTC(new Date().getUTCFullYear(), new Date().getUTCMonth(), 1)).toISOString();
-  // Budget is one shared monthly cap for the whole app (one Anthropic workspace); the rate limit is per user.
-  const spent = await env.DB.prepare(`SELECT COALESCE(SUM(est_cost_usd), 0) AS s FROM user_ai_usage WHERE at >= ?`).bind(monthStart).first<{ s: number }>();
-  if ((spent?.s ?? 0) >= (Number(env.AI_BUDGET_USD) || 0)) throw new HttpError(429, "ai_budget_reached");
-  const recent = await env.DB.prepare(`SELECT COUNT(*) AS n FROM user_ai_usage WHERE user_id = ? AND at >= ?`).bind(userId, new Date(Date.now() - 10 * 60_000).toISOString()).first<{ n: number }>();
-  if ((recent?.n ?? 0) >= 20) throw new HttpError(429, "ai_rate_limited");
+  const r = await env.DB.prepare(`SELECT (SELECT COALESCE(SUM(est_cost_usd), 0) FROM user_ai_usage WHERE at >= ?1) AS spent,
+      (SELECT COUNT(*) FROM user_ai_usage WHERE user_id = ?2 AND at >= ?3) AS recent`)
+    .bind(monthStart, userId, new Date(Date.now() - 10 * 60_000).toISOString()).first<{ spent: number; recent: number }>();
+  if ((r?.spent ?? 0) >= (Number(env.AI_BUDGET_USD) || 0)) throw new HttpError(429, "ai_budget_reached");
+  if ((r?.recent ?? 0) >= perTenMinutes) throw new HttpError(429, "ai_rate_limited");
+}
+
+export const estCost = (u: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) =>
+  (u.input_tokens * MODEL.inPerM + (u.cache_creation_input_tokens ?? 0) * MODEL.inPerM * 1.25 + (u.cache_read_input_tokens ?? 0) * MODEL.inPerM * 0.1 + u.output_tokens * MODEL.outPerM) / 1_000_000;
+
+/** Usage row — metadata only (no prompt, answer or image content). */
+export function usageStatement(env: AppEnv, row: { userId: string; feature: string; plantId: string | null; inTok: number; outTok: number; images: number; cost: number; latencyMs: number; status: string; sections: string[]; firstTokenMs?: number | null; contextChars?: number | null; timings?: Record<string, number> | null }) {
+  return env.DB.prepare(`INSERT INTO user_ai_usage (user_id, at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections, first_token_ms, context_chars, timings) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+    .bind(row.userId, new Date().toISOString(), row.feature, MODEL.id, row.plantId, row.inTok, row.outTok, row.images, row.cost, row.latencyMs, row.status, row.sections.join(","), row.firstTokenMs ?? null, row.contextChars ?? null, row.timings ? JSON.stringify(row.timings) : null);
+}
+
+async function callClaude(env: AppEnv, userId: string, feature: string, plantId: string | null, userText: string, images: string[], sections: string[], timings: Record<string, number>) {
+  let t = Date.now();
+  await checkAiAllowed(env, userId);
+  timings.limitsMs = Date.now() - t;
 
   const client = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 1, timeout: 90_000 });
   const t0 = Date.now();
@@ -151,11 +105,12 @@ async function callClaude(env: AppEnv, userId: string, feature: string, plantId:
     const text = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text).join("");
     let result: unknown = null;
     try { result = JSON.parse(text); } catch { status = "unparseable"; }
+    timings.anthropicMs = Date.now() - t0;
     const u = res.usage;
     const inTok = u.input_tokens + (u.cache_read_input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0);
-    const cost = (u.input_tokens * MODEL.inPerM + (u.cache_creation_input_tokens ?? 0) * MODEL.inPerM * 1.25 + (u.cache_read_input_tokens ?? 0) * MODEL.inPerM * 0.1 + u.output_tokens * MODEL.outPerM) / 1_000_000;
-    await env.DB.prepare(`INSERT INTO user_ai_usage (user_id, at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-      .bind(userId, new Date().toISOString(), feature, MODEL.id, plantId, inTok, u.output_tokens, images.length, cost, Date.now() - t0, status, sections.join(",")).run();
+    t = Date.now();
+    await usageStatement(env, { userId, feature, plantId, inTok, outTok: u.output_tokens, images: images.length, cost: estCost(u), latencyMs: Date.now() - t0, status, sections, contextChars: userText.length, timings }).run();
+    timings.persistMs = Date.now() - t;
     logEvent("ai", { feature, images: images.length, inTok, outTok: u.output_tokens, ms: Date.now() - t0, status });
     if (!result) throw new HttpError(502, status === "refusal" ? "ai_refused" : "ai_unparseable");
     return result;
@@ -164,19 +119,19 @@ async function callClaude(env: AppEnv, userId: string, feature: string, plantId:
     const code = e instanceof Anthropic.APIError ? `ai_upstream_${e.status ?? "error"}` : "ai_request_failed";
     logEvent("ai", { feature, ms: Date.now() - t0, status: code });
     // Failed attempts are recorded too (metadata only, no cost) so AI health is visible without log access.
-    await env.DB.prepare(`INSERT INTO user_ai_usage (user_id, at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?)`)
-      .bind(userId, new Date().toISOString(), feature, MODEL.id, plantId, images.length, Date.now() - t0, code, sections.join(",")).run().catch(() => {});
+    await usageStatement(env, { userId, feature, plantId, inTok: 0, outTok: 0, images: images.length, cost: 0, latencyMs: Date.now() - t0, status: code, sections, timings }).run().catch(() => {});
     throw new HttpError(502, code);
   }
 }
 
-function checkImages(images: unknown): string[] {
+export function checkImages(images: unknown): string[] {
   if (images == null) return [];
   if (!Array.isArray(images) || images.length > MAX_IMAGES) throw new HttpError(400, "too_many_images");
   return images.map((x) => { if (typeof x !== "string" || x.length > MAX_IMAGE_B64 || !/^[A-Za-z0-9+/=]+$/.test(x)) throw new HttpError(400, "bad_image"); return x; });
 }
 
-export async function aiRequest(req: Request, env: AppEnv, user: PhotoOwner): Promise<Response> {
+export async function aiRequest(req: Request, env: AppEnv, user: PhotoOwner, requestStart = Date.now()): Promise<Response> {
+  const timings: Record<string, number> = { authMs: Date.now() - requestStart };
   const body = await readJson<{ mode?: string; plantId?: string; question?: string; images?: string[]; photoIds?: string[]; symptoms?: string[] }>(req, 8_000_000);
   const mode = body.mode ?? "ask";
   if (!(mode in MODE_PROMPT)) throw new HttpError(400, "bad_mode");
@@ -188,7 +143,10 @@ export async function aiRequest(req: Request, env: AppEnv, user: PhotoOwner): Pr
   let contextJson = "";
   let sections: string[] = [];
   if (plantId) {
-    const built = await buildPlantContext(env, user.id, plantId, question);
+    const topics = detectTopics(question, ...(body.symptoms ?? []));
+    if (mode === "diagnose") topics.add("health" as Topic);
+    const built = await loadPlantContext(env, user.id, { plantId, topics });
+    timings.contextDbMs = built.dbMs;
     sections = built.sections;
     contextJson = JSON.stringify(built.ctx);
     // Referenced photos must belong to this plant (checked against the synced photo records).
@@ -208,6 +166,7 @@ export async function aiRequest(req: Request, env: AppEnv, user: PhotoOwner): Pr
     question ? `שאלה/הערה: ${question}` : "",
     `מספר תמונות מצורפות: ${images.length}.`,
   ].filter(Boolean).join("\n\n");
-  const result = await callClaude(env, user.id, mode, plantId, text, images, sections);
-  return json({ result, contextSections: sections });
+  const result = await callClaude(env, user.id, mode, plantId, text, images, sections, timings);
+  timings.totalMs = Date.now() - requestStart;
+  return json({ result, contextSections: sections, timings });
 }

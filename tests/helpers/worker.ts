@@ -59,8 +59,43 @@ export interface Harness {
   anthropic: AnthropicCall[];
   /** When set, the mocked Anthropic API answers with this HTTP error status. */
   anthropicStatus?: number;
+  /** Streaming mock: answer text, pieces it is split into, delay before the first piece and between pieces. */
+  chatReply?: { text: string; pieces?: number; firstMs?: number; gapMs?: number; stopReason?: string };
+  /** Structured (non-streaming) mock: candidates returned for identify/diagnose. */
+  aiCandidates?: { name_he: string; scientific: string; confidence: string; why: string }[];
+  /** Set when a streaming mock response was cancelled by the Worker (upstream abort). */
+  anthropicAborted?: number;
   certFetches: number;
   fetch(path: string, init?: RequestInit & { token?: string | null; user?: string | null }): Promise<Response>;
+}
+
+function streamReply(h: Harness): Response {
+  const r = h.chatReply ?? { text: "תשובה קצרה: לבדוק את האדמה לפני השקיה." };
+  const n = Math.max(1, r.pieces ?? 4);
+  const size = Math.ceil(r.text.length / n);
+  const pieces = Array.from({ length: n }, (_, i) => r.text.slice(i * size, (i + 1) * size)).filter(Boolean);
+  const ev = (type: string, data: Record<string, unknown>) => new TextEncoder().encode(`event: ${type}\ndata: ${JSON.stringify({ type, ...data })}\n\n`);
+  const wait = (ms: number) => new Promise((res) => setTimeout(res, ms));
+  let cancelled = false;
+  const body = new ReadableStream<Uint8Array>({
+    async start(c) {
+      c.enqueue(ev("message_start", { message: { id: "msg_stream", type: "message", role: "assistant", model: "claude-sonnet-5", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 300, output_tokens: 1 } } }));
+      c.enqueue(ev("content_block_start", { index: 0, content_block: { type: "text", text: "" } }));
+      await wait(r.firstMs ?? 5);
+      for (let i = 0; i < pieces.length; i++) {
+        if (cancelled) return;
+        if (i) await wait(r.gapMs ?? 5);
+        if (cancelled) return;
+        c.enqueue(ev("content_block_delta", { index: 0, delta: { type: "text_delta", text: pieces[i] } }));
+      }
+      c.enqueue(ev("content_block_stop", { index: 0 }));
+      c.enqueue(ev("message_delta", { delta: { stop_reason: r.stopReason ?? "end_turn", stop_sequence: null }, usage: { output_tokens: 40 } }));
+      c.enqueue(ev("message_stop", {}));
+      c.close();
+    },
+    cancel() { cancelled = true; h.anthropicAborted = (h.anthropicAborted ?? 0) + 1; },
+  });
+  return new Response(body, { headers: { "content-type": "text/event-stream" } });
 }
 
 export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstRequest?: (db: TestD1, r2: TestR2) => Promise<void> } = {}): Promise<Harness> {
@@ -85,9 +120,11 @@ export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstReq
         return new Response(JSON.stringify({ keys: [{ ...signer.jwk, kid: signer.kid, alg: "RS256", use: "sig" }] }), { headers: { "content-type": "application/json" } });
       }
       if (u.hostname === "api.anthropic.com") {
-        anthropic.push({ body: await req.json() });
+        const reqBody = await req.json() as Record<string, unknown>;
+        anthropic.push({ body: reqBody });
         if (h.anthropicStatus) return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: h.anthropicStatus, headers: { "content-type": "application/json" } });
-        const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: [{ name_he: "פוטוס", scientific: "Epipremnum aureum", confidence: "likely", why: "test" }], urgency: "none", contagious_suspected: false, retake_request: null };
+        if (reqBody.stream) return streamReply(h);
+        const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: h.aiCandidates ?? [{ name_he: "פוטוס", scientific: "Epipremnum aureum", confidence: "likely", why: "test" }], urgency: "none", contagious_suspected: false, retake_request: null };
         return new Response(JSON.stringify({
           id: "msg_test", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,
           content: [{ type: "text", text: JSON.stringify(result) }], usage: { input_tokens: 100, output_tokens: 20 },

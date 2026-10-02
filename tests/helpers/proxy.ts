@@ -28,7 +28,14 @@ export async function startAccessProxy(h: Harness, people: Record<string, Person
       const out: Record<string, string> = {};
       r.headers.forEach((v: string, k: string) => { out[k] = v; });
       res.writeHead(r.status, out);
-      res.end(Buffer.from(await r.arrayBuffer()));
+      // Stream the body through (like Cloudflare does) so event-stream answers arrive progressively.
+      if (!r.body) { res.end(); return; }
+      res.flushHeaders();
+      const reader = (r.body as ReadableStream<Uint8Array>).getReader();
+      req.on("close", () => { void reader.cancel().catch(() => undefined); });
+      try { for (;;) { const { value, done } = await reader.read(); if (done) break; res.write(Buffer.from(value)); } }
+      catch { /* client went away */ }
+      res.end();
       return;
     }
     let file = join(DIST, decodeURIComponent(url.pathname));

@@ -13,7 +13,8 @@ import { planBatch, type StoredRecord } from "./merge.ts";
 // atomically and the client retries with fresh state — an optimistic compare-and-set. Different
 // users never contend.
 
-const ENTITIES = new Set<Entity>(["plant", "event", "location", "light", "photo", "wishlist", "health", "profile", "reminder"]);
+// "message" is deliberately absent: chat messages are written only by the server (chat.ts → serverWrite).
+const ENTITIES = new Set<Entity>(["plant", "event", "location", "light", "photo", "wishlist", "health", "profile", "reminder", "chat"]);
 const ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 export const MAX_BATCH = 8; // keeps statements per invocation well under the Free plan's 50 D1 queries
 
@@ -32,14 +33,32 @@ export async function push(req: Request, env: AppEnv, userId: string): Promise<R
   if (!Array.isArray(body.mutations) || !body.mutations.length) throw new HttpError(400, "no_mutations");
   if (body.mutations.length > MAX_BATCH) throw new HttpError(400, "batch_too_large");
   body.mutations.forEach(validate);
-  const db = env.DB;
-  const now = new Date().toISOString();
+  const results = await applyMutations(env.DB, userId, body.mutations);
+  logEvent("sync.push", { batch: body.mutations.length, conflicts: results.reduce((n, r) => n + r.conflicts, 0) });
+  return json({ results });
+}
 
-  const ids = body.mutations.map((m) => m.mutationId);
+/**
+ * Records written by the SERVER for this user (chat messages): same store, revisions and idempotency as a
+ * client push, so they reach every device of the user through the normal pull. Server fields win (no
+ * conflict records). Retries a concurrent-write collision a few times.
+ */
+export async function serverWrite(db: D1Database, userId: string, items: { entity: Entity; id: string; patch: Record<string, unknown>; mutationId: string }[]): Promise<void> {
+  const now = new Date().toISOString();
+  const muts: Mutation[] = items.map((i) => ({ mutationId: i.mutationId, entity: i.entity, recordId: i.id, patch: i.patch, baseRev: 2 ** 31, clientTime: now, deviceId: "server" }));
+  for (let attempt = 0; ; attempt++) {
+    try { await applyMutations(db, userId, muts); return; }
+    catch (e) { if (!(e instanceof HttpError) || e.status !== 409 || attempt >= 4) throw e; await new Promise((r) => setTimeout(r, 20 + attempt * 40)); }
+  }
+}
+
+async function applyMutations(db: D1Database, userId: string, mutations: Mutation[]): Promise<MutationResult[]> {
+  const now = new Date().toISOString();
+  const ids = mutations.map((m) => m.mutationId);
   const dupRows = (await db.prepare(`SELECT mutation_id, seq, result FROM user_mutations WHERE user_id = ? AND mutation_id IN (${ids.map(() => "?").join(",")})`)
     .bind(userId, ...ids).all<{ mutation_id: string; seq: number | null; result: string }>()).results;
   const dup = new Map(dupRows.map((r) => [r.mutation_id, r]));
-  const fresh = body.mutations.filter((m) => !dup.has(m.mutationId));
+  const fresh = mutations.filter((m) => !dup.has(m.mutationId));
 
   const keys = [...new Set(fresh.map((m) => `${m.entity}|${m.recordId}`))];
   const current = new Map<string, StoredRecord>();
@@ -74,12 +93,12 @@ export async function push(req: Request, env: AppEnv, userId: string): Promise<R
   }
   if (stmts.length) {
     try { await db.batch(stmts); } catch {
-      logEvent("sync.push", { outcome: "retry_needed", batch: body.mutations.length });
+      logEvent("sync.push", { outcome: "retry_needed", batch: mutations.length });
       throw new HttpError(409, "concurrent_write_retry");
     }
   }
 
-  const results: MutationResult[] = body.mutations.map((m) => {
+  return mutations.map((m) => {
     const d = dup.get(m.mutationId);
     if (d) return { mutationId: m.mutationId, entity: m.entity, recordId: m.recordId, baseRev: m.baseRev, result: `duplicate:${d.result}`, appliedRev: d.seq, conflicts: 0 };
     const p = plan.find((x) => x.mutation.mutationId === m.mutationId)!;
@@ -90,8 +109,6 @@ export async function push(req: Request, env: AppEnv, userId: string): Promise<R
       conflicts: p.conflicts.length,
     };
   });
-  logEvent("sync.push", { batch: body.mutations.length, statements: stmts.length, conflicts: results.reduce((n, r) => n + r.conflicts, 0) });
-  return json({ results });
 }
 
 export async function pull(url: URL, env: AppEnv, userId: string): Promise<Response> {

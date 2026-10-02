@@ -64,6 +64,23 @@ export async function addPhoto(plantId: string, file: File, opts: { setMain?: bo
   return photo;
 }
 
+/**
+ * Adds several originals to a plant once each (identical bytes are stored only once), the chosen one as the
+ * main photo. Used when photos from an identification become the new plant's first photos.
+ */
+export async function addPhotosOnce(plantId: string, files: File[], mainIndex = 0): Promise<Photo[]> {
+  const order = files.map((f, i) => ({ f, i })).sort((a, b) => (a.i === mainIndex ? -1 : b.i === mainIndex ? 1 : a.i - b.i));
+  const seen = new Set<string>();
+  const out: Photo[] = [];
+  for (const { f, i } of order) {
+    const sha = hex(await crypto.subtle.digest("SHA-256", await f.arrayBuffer()));
+    if (seen.has(sha)) continue;
+    seen.add(sha);
+    out.push(await addPhoto(plantId, f, { setMain: i === mainIndex }));
+  }
+  return out;
+}
+
 let uploading = false;
 export async function uploadPending(): Promise<void> {
   if (uploading || !navigator.onLine) return;
