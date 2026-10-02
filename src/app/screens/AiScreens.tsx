@@ -1,47 +1,14 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
 import { SPECIES, type Species } from "../../shared/species.ts";
-import { aiErrorText, askAi, picked, prepareImages, type AiResult } from "../data/ai.ts";
+import { aiErrorText, askAi, picked, type AiResult } from "../data/ai.ts";
+import { prepareForUpload as prepareImages } from "../data/images.ts";
+import { PhotoPicker, usePhotoPicker as useFilePicker } from "../ui/PhotoPicker.tsx";
 import { openHealthCase, setStatus, speciesOf, usePhotos, usePlant, usePlants } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
 import { BackButton, Button, Chip, Field, InfoNote, PlantImage, Select, Sheet, Textarea, useToast } from "../ui/ui.tsx";
 import { AiResultView } from "./AiResultView.tsx";
-
-function useFilePicker(max = 4) {
-  const [files, setFiles] = useState<File[]>([]);
-  const [urls, setUrls] = useState<string[]>([]);
-  useEffect(() => { const u = files.map((f) => URL.createObjectURL(f)); setUrls(u); return () => u.forEach(URL.revokeObjectURL); }, [files]);
-  const add = (list: FileList | File[] | null) => setFiles((cur) => [...cur, ...Array.from(list ?? [])].slice(0, max));
-  const remove = (i: number) => setFiles((cur) => cur.filter((_, j) => j !== i));
-  return { files, urls, add, remove, clear: () => setFiles([]) };
-}
-
-function PhotoPicker({ picker, hint }: { picker: ReturnType<typeof useFilePicker>; hint?: string }) {
-  const cam = useRef<HTMLInputElement>(null);
-  const lib = useRef<HTMLInputElement>(null);
-  return (
-    <div>
-      <div className="flex flex-wrap gap-2">
-        {picker.urls.map((u, i) => (
-          <div key={u} className="relative size-20">
-            <img src={u} alt="" className="size-20 rounded-2xl object-cover" />
-            <button aria-label="הסרת תמונה" onClick={() => picker.remove(i)} className="absolute -end-1 -top-1 grid size-7 place-items-center rounded-full bg-ink text-bg"><Icon name="x" size={14} /></button>
-          </div>
-        ))}
-        {picker.files.length < 4 && (
-          <>
-            <button onClick={() => cam.current?.click()} className="pressable grid size-20 place-items-center rounded-2xl border-2 border-dashed border-sage-strong text-green" aria-label="צילום"><Icon name="camera" size={28} /></button>
-            <button onClick={() => lib.current?.click()} className="pressable grid size-20 place-items-center rounded-2xl border-2 border-dashed border-sage-strong text-green" aria-label="גלריה"><Icon name="image" size={28} /></button>
-          </>
-        )}
-      </div>
-      {hint && <p className="mt-2 text-[13px] text-muted">{hint}</p>}
-      <input ref={cam} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { picker.add(e.target.files); e.target.value = ""; }} />
-      <input ref={lib} type="file" accept="image/*" multiple hidden onChange={(e) => { picker.add(e.target.files); e.target.value = ""; }} />
-    </div>
-  );
-}
 
 function Frame({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
   return (
@@ -80,15 +47,23 @@ export function Identify() {
   const [err, setErr] = useState<string | null>(null);
   useEffect(() => { if (params.get("picked") && picked.files.length) { picker.add(picked.files); picked.files = []; } }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const titles = { identify: ["זיהוי צמח", "צלמי את הצמח — עדיף צילום של הצמח כולו ועוד צילום קרוב של עלה."], pest: ["זיהוי מזיקים", "צילום קרוב וחד של המזיק או הסימן."], what: ["מה זה הדבר הזה?", "צמח, פטרייה, חרק או כתם — נעזור להבין מה רואים."] }[mode];
+  const [stage, setStage] = useState<"prep" | "ask" | null>(null);
   const run = async () => {
+    if (!picker.files.length) return;
     setBusy(true); setErr(null); setRes(null);
-    try { setRes(await askAi({ mode, images: await prepareImages(picker.files), question: note })); } catch (e) { setErr((e as Error).message); } finally { setBusy(false); }
+    try {
+      setStage("prep");
+      const images = await prepareImages(picker.files);
+      setStage("ask");
+      setRes(await askAi({ mode, images, question: note }));
+    } catch (e) { setErr((e as Error).message); } finally { setBusy(false); setStage(null); }
   };
   return (
     <Frame title={titles[0]} subtitle={titles[1]}>
-      <PhotoPicker picker={picker} hint="עד 4 תמונות. נשלח עותק מוקטן בלי מיקום GPS." />
+      <PhotoPicker picker={picker} hint="נשלח עותק מוקטן בלי מיקום GPS; המקור לא משתנה." />
       <Textarea rows={2} placeholder="הערה (אופציונלי)" value={note} onChange={(e) => setNote(e.target.value)} />
-      <Button icon="sparkles" loading={busy} disabled={!picker.files.length} onClick={run} className="w-full">{busy ? "בודקים…" : "לזהות"}</Button>
+      <Button icon="sparkles" loading={busy} disabled={!picker.files.length || picker.loading || busy} onClick={run} className="w-full">{stage === "prep" ? "מכינים את התמונות…" : stage === "ask" ? "מזהים…" : "לזהות"}</Button>
+      {!picker.files.length && !busy && <p className="-mt-2 text-center text-[13px] text-muted">צריך לפחות תמונה אחת כדי לזהות.</p>}
       {err && <ErrorBox code={err} onRetry={run} />}
       {res && (
         <>

@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { daysBetween, displayName, fertilizePlan, relativeDays, soilCheckPlan, STATUS_LABEL } from "../../shared/domain.ts";
 import type { HealthCase, Photo, Plant, PlantEvent, Status } from "../../shared/types.ts";
+import { LIGHT_SOURCE_LABEL } from "../../shared/light.ts";
+import { LIGHT_LABEL } from "../../shared/species.ts";
 import { addPhoto, usePhotoUrl } from "../data/media.ts";
 import {
   addReminder, archivePlant, deletePlant, moveTo, openHealthCase, postpone, recordEvent, recordSoilCheck, resolveHealthCase,
-  setStatus, speciesOf, updatePlant, useEvents, useHealth, useLocation, useLocations, usePhotos, usePlant, useReminders,
+  setStatus, speciesOf, updatePlant, useEvents, useHealth, useLocation, useLocations, usePhotos, usePlant, usePlantLights, useReminders,
 } from "../data/store.ts";
 import { mutate } from "../data/sync.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
@@ -144,6 +146,7 @@ function CareTab({ p, events, onSoil, onNote, onMove, onReminder }: { p: Plant; 
           { icon: "bell" as const, label: "תזכורת", on: onReminder },
           { icon: "sparkles" as const, label: "לשאול את הבוטנאי", on: () => nav(`/botanist?plant=${p.id}`) },
           { icon: "steth" as const, label: "אבחון", on: () => nav(`/diagnose/${p.id}`) },
+          { icon: "sun" as const, label: "מד אור", on: () => nav(`/tools/light?plant=${p.id}`) },
         ].map((a) => (
           <button key={a.label} onClick={a.on} className="pressable flex flex-col items-center gap-1.5 rounded-2xl bg-surface p-3 text-center shadow-soft">
             <span className="grid size-11 place-items-center rounded-full bg-sage text-green"><Icon name={a.icon} /></span>
@@ -168,6 +171,8 @@ function CareTab({ p, events, onSoil, onNote, onMove, onReminder }: { p: Plant; 
         )}
       </Card>
 
+      <PlantLightCard p={p} />
+
       <Card className="p-4">
         <h3 className="text-[18px] font-bold text-ink">פרטים</h3>
         <dl className="mt-2 grid grid-cols-2 gap-3 text-[15px]">
@@ -180,6 +185,30 @@ function CareTab({ p, events, onSoil, onNote, onMove, onReminder }: { p: Plant; 
 
       {sp ? <CareSummary sp={sp} /> : <InfoNote title="אין מידע כללי על הזן">הצמח לא משויך לזן מהמאגר, לכן ההמלצות יתבססו על ההיסטוריה שלו בלבד.</InfoNote>}
     </div>
+  );
+}
+
+function PlantLightCard({ p }: { p: Plant }) {
+  const nav = useNavigate();
+  const readings = [...(usePlantLights(p.id) ?? [])].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt));
+  const loc = useLocation(p.locationId);
+  return (
+    <Card className="p-4">
+      <h3 className="flex items-center gap-2 text-[18px] font-bold text-ink"><Icon name="sun" className="text-sun" />האור של הצמח</h3>
+      {readings.length ? (
+        <div className="mt-2 space-y-1.5">
+          {readings.slice(0, 3).map((r) => (
+            <div key={r.id} className="flex items-center justify-between rounded-xl bg-bg-soft px-3 py-2 text-[14px]">
+              <span className="text-ink">{LIGHT_LABEL[r.category]}</span>
+              <span className="text-muted">{new Date(r.measuredAt).toLocaleDateString("he-IL")} · {LIGHT_SOURCE_LABEL[r.method] ?? "הערכה"}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-[15px] text-muted">{loc?.lightCategory ? `לפי המיקום "${loc.name}": ${LIGHT_LABEL[loc.lightCategory]}. ` : ""}עוד אין הערכת אור לצמח הזה.</p>
+      )}
+      <Button size="sm" variant="secondary" icon="sun" className="mt-3" onClick={() => nav(`/tools/light?plant=${p.id}`)}>מדידת אור</Button>
+    </Card>
   );
 }
 

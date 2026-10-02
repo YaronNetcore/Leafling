@@ -84,7 +84,7 @@ export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstReq
       }
       if (u.hostname === "api.anthropic.com") {
         anthropic.push({ body: await req.json() });
-        const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: [], urgency: "none", contagious_suspected: false, retake_request: null };
+        const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: [{ name_he: "פוטוס", scientific: "Epipremnum aureum", confidence: "likely", why: "test" }], urgency: "none", contagious_suspected: false, retake_request: null };
         return new Response(JSON.stringify({
           id: "msg_test", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,
           content: [{ type: "text", text: JSON.stringify(result) }], usage: { input_tokens: 100, output_tokens: 20 },

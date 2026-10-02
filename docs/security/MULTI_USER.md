@@ -150,6 +150,7 @@ Worker; a local proxy injects the Access JWT for the identity in a cookie (what 
 | 13 | forged/invalid JWT | forged signature, unknown kid, wrong aud/iss, expired, no exp, nbf in future, alg none/HS256, no sub, no email, wrong type, malformed, tampered payload |
 | 14 | missing auth | every personal endpoint → 401 |
 | 15 | Phase 0 | harness works for the owner, 403 for others, 401 without token |
+| — | new data (2026-10) | light observations, multiple pets, identification images and AI context (light estimates, pet kinds) stay in the caller's space; foreign plant ids → own space / 404 |
 | — | concurrency | three users pushing in parallel (with CAS retries) never mix; per-user revisions unique |
 
 Run: `npm test` (unit + server isolation) and `npm run test:e2e` (builds, then the browser tests).

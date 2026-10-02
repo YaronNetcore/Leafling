@@ -1,3 +1,4 @@
+import { normalizePets, petDisplayName, petSafety } from "../../shared/pets.ts";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { LIGHT_LABEL, type Species, type Toxicity } from "../../shared/species.ts";
@@ -79,21 +80,24 @@ const TOX: Record<Toxicity, { label: string; cls: string; icon: IconName }> = {
 
 export function SafetyPanel({ sp }: { sp: Species }) {
   const profile = useProfile();
-  const mine = new Set((profile?.pets ?? []).map((p) => p.kind));
+  const pets = normalizePets(profile?.pets);
+  const mine = new Set(pets.map((p) => p.kind));
+  const personal = petSafety(sp.safety, pets);
   const rows: { kind: PetKind; tox: Toxicity }[] = (["cat", "dog", "bird", "rabbit", "rodent", "reptile"] as PetKind[]).map((k) => ({
     kind: k, tox: k === "cat" ? sp.safety.cats : k === "dog" ? sp.safety.dogs : "unknown",
   }));
   rows.sort((a, b) => Number(mine.has(b.kind)) - Number(mine.has(a.kind)));
   return (
     <div className="space-y-3">
-      {mine.size > 0 && rows.some((r) => mine.has(r.kind) && r.tox === "toxic") && (
-        <div className="flex gap-3 rounded-card bg-heat-bg p-4 text-heat"><Icon name="paw" /><div className="text-[15px] font-medium">יש בבית חיה שעבורה הצמח מסומן כרעיל. כדאי למקם אותו מחוץ להישג יד.</div></div>
+      {personal.warning && (
+        <div className="flex gap-3 rounded-card bg-heat-bg p-4 text-heat" data-testid="pet-warning"><Icon name="paw" /><div className="text-[15px] font-medium">{personal.warning}. הצמח מסומן כרעיל לפי המקור — כדאי למקם אותו מחוץ להישג יד.</div></div>
       )}
+      {personal.unknownNote && <div className="rounded-card bg-surface-2 p-3 text-[14px] text-muted" data-testid="pet-unknown">{personal.unknownNote}</div>}
       <div className="space-y-2">
         {rows.map((r) => (
           <div key={r.kind} className="flex items-center gap-3 rounded-2xl bg-surface p-3 shadow-soft">
             <div className="grid size-11 place-items-center rounded-full bg-sage text-green"><Icon name="paw" /></div>
-            <div className="flex-1 text-[16px] font-semibold text-ink">{PET_LABEL[r.kind]}{mine.has(r.kind) && <span className="ms-2 rounded-full bg-sage px-2 py-0.5 text-[12px] font-medium text-green">בבית</span>}</div>
+            <div className="flex-1 text-[16px] font-semibold text-ink">{PET_LABEL[r.kind]}{mine.has(r.kind) && <span className="ms-2 rounded-full bg-sage px-2 py-0.5 text-[12px] font-medium text-green">בבית: {pets.filter((x) => x.kind === r.kind).map((x) => petDisplayName(x, pets)).join(", ")}</span>}</div>
             <span className={cx("inline-flex items-center gap-1 rounded-full px-3 py-1 text-[13px] font-semibold", TOX[r.tox].cls)}><Icon name={TOX[r.tox].icon} size={14} />{TOX[r.tox].label}</span>
           </div>
         ))}

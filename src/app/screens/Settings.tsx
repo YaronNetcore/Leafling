@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
+import { normalizePets, petDisplayName } from "../../shared/pets.ts";
 import type { Plant, Profile } from "../../shared/types.ts";
 import { currentUserId, db, deleteLocalUserDb, getMeta } from "../data/db.ts";
 import { me, signOut } from "../data/identity.ts";
@@ -8,7 +9,8 @@ import { saveProfile, useProfile } from "../data/store.ts";
 import { apiJson, mutate, onSync, resyncFromServer, sync, type SyncState } from "../data/sync.ts";
 import { useLiveQuery } from "dexie-react-hooks";
 import { Icon } from "../ui/icons.tsx";
-import { ActionRow, BackButton, Button, Card, Chip, InfoNote, SectionTitle, useToast } from "../ui/ui.tsx";
+import { PetsEditor } from "../ui/PetsEditor.tsx";
+import { ActionRow, BackButton, Button, Card, Chip, InfoNote, SectionTitle, Sheet, useToast } from "../ui/ui.tsx";
 import { HELP, INTERESTS, PLACES } from "./Onboarding.tsx";
 
 interface Conflict { id: number; entity: string; record_id: string; field: string; overwritten: string; incoming: string; at: string; resolved: number }
@@ -46,6 +48,8 @@ export default function Settings() {
   const [lastSync, setLastSync] = useState<number | undefined>();
   const [conflicts, setConflicts] = useState<Conflict[] | null>(null);
   const [busy, setBusy] = useState(false);
+  const [petsOpen, setPetsOpen] = useState(false);
+  const pets = normalizePets(profile?.pets);
   const rejected = useLiveQuery(() => db.outbox.where("state").equals("rejected").toArray(), [], []);
   const trash = useLiveQuery(async () => (await db.plants.toArray()).filter((p) => p.deletedAt && Date.now() - Date.parse(p.deletedAt) < 30 * 86_400_000), [], [] as Plant[]);
   useEffect(() => onSync((x) => { setS(x); if (x.lastSyncAt) setLastSync(x.lastSyncAt); }), []);
@@ -64,7 +68,7 @@ export default function Settings() {
       <SectionTitle>הפרופיל שלי</SectionTitle>
       <div className="space-y-2">
         <ActionRow icon="pin" title="אזור" subtitle={[profile?.city, profile?.region, profile?.country].filter(Boolean).join(", ") || "לא הוגדר"} onClick={() => nav("/onboarding/1")} />
-        <ActionRow icon="paw" title="חיות מחמד" subtitle={profile?.pets?.length ? profile.pets.map((p) => p.name || { dog: "כלב", cat: "חתול", bird: "ציפור", rabbit: "ארנב", rodent: "מכרסם", reptile: "זוחל", other: "אחר" }[p.kind]).join(", ") : "אין"} onClick={() => nav("/onboarding/2")} />
+        <ActionRow icon="paw" title="חיות מחמד" subtitle={pets.length ? pets.map((x) => petDisplayName(x, pets)).join(", ") : "אין"} onClick={() => setPetsOpen(true)} />
         <ActionRow icon="sprout" title="מה אני מגדלת" subtitle={label(INTERESTS, profile?.interests)} onClick={() => nav("/onboarding/3")} />
         <ActionRow icon="home" title="איפה אני מגדלת" subtitle={label(PLACES, profile?.places)} onClick={() => nav("/onboarding/4")} />
         <ActionRow icon="leaf" title="ניסיון" subtitle={{ beginner: "מתחילה", some: "קצת ניסיון", experienced: "מנוסה", expert: "מנוסה מאוד" }[profile?.experience ?? "beginner"] ?? "לא נבחר"} onClick={() => nav("/onboarding/5")} />
@@ -117,6 +121,11 @@ export default function Settings() {
 
       <SectionTitle>התראות</SectionTitle>
       <InfoNote icon="bell">התראות למכשיר (רק לבדיקות אדמה, טיפולים, שתילים והשרשות) יופעלו אחרי שבדיקות שלב 0 על ה-iPhone יאשרו אותן. בינתיים מסך "היום" הוא המקור למשימות.</InfoNote>
+      <Sheet open={petsOpen} onClose={() => setPetsOpen(false)} title="חיות המחמד שלי">
+        <PetsEditor pets={pets} onChange={(next) => void saveProfile({ pets: next })} />
+        <Button className="mt-4 w-full" onClick={() => setPetsOpen(false)}>סיום</Button>
+      </Sheet>
+
       <SectionTitle>החשבון שלי</SectionTitle>
       <Card className="space-y-3 p-4">
         <p className="text-[14px] text-muted">מחובר/ת בתור <span dir="ltr" className="font-medium text-ink">{me?.email ?? "—"}</span>. הנתונים שלך פרטיים ונפרדים מכל משתמש אחר.</p>

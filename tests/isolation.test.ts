@@ -301,6 +301,78 @@ describe("cross-user isolation (1–9)", () => {
   });
 });
 
+describe("new personal data types stay per user (light, pets, identification)", () => {
+  const plant = `light-${randomUUID().slice(0, 8)}`;
+  const loc = `loc-${randomUUID().slice(0, 8)}`;
+  beforeAll(async () => {
+    const r = await owner.push([
+      mut("location", loc, { name: "חלון מזרחי של A", kind: "indoor" }),
+      mut("plant", plant, { commonName: "פילודנדרון של A", status: "plant", ordinal: 1, locationId: loc }),
+      mut("light", `${plant}-l1`, { plantId: plant, locationId: loc, category: "bright_indirect", method: "camera_exposure", estimate: true, measuredAt: "2026-10-01T09:00:00Z" }),
+      mut("profile", "me", { pets: [{ id: "p1", kind: "dog", name: "מיקאסה" }, { id: "p2", kind: "dog", name: "בייליס" }, { id: "p3", kind: "cat", name: null }] }),
+    ]);
+    expect(r.status).toBe(200);
+  });
+
+  it("B cannot see A's light observations or pets through sync/export", async () => {
+    const all = JSON.stringify(await bob.pullAll());
+    for (const s of [plant, loc, "חלון מזרחי של A", "מיקאסה", "בייליס"]) expect(all.includes(s), s).toBe(false);
+  });
+
+  it("B writing a light observation onto A's plant id lands only in B's space", async () => {
+    await bob.push([mut("light", `${plant}-evil`, { plantId: plant, locationId: loc, category: "low", method: "user_choice", estimate: true })]);
+    const mine = await owner.pullAll();
+    expect(mine.some((r) => r.id === `${plant}-evil`)).toBe(false);
+    expect(mine.filter((r) => r.entity === "light" && r.data.plantId === plant).map((r) => r.data.category)).toEqual(["bright_indirect"]);
+  });
+
+  it("multiple pets of one kind are stored and synced as separate records in the owner's profile only", async () => {
+    const prof = (await owner.pullAll()).find((r) => r.entity === "profile")!;
+    const pets = prof.data.pets as { id: string; kind: string; name: string | null }[];
+    expect(pets.filter((p) => p.kind === "dog").map((p) => p.name)).toEqual(["מיקאסה", "בייליס"]);
+    // Remove one dog → the other stays.
+    await owner.push([mut("profile", "me", { pets: pets.filter((p) => p.id !== "p1") }, prof.rev)]);
+    const after = (await owner.pullAll()).find((r) => r.entity === "profile")!.data.pets as { id: string; name: string | null }[];
+    expect(after.map((p) => p.id)).toEqual(["p2", "p3"]);
+    expect(JSON.stringify(await bob.pullAll())).not.toContain("בייליס");
+  });
+
+  it("AI context: A gets A's light (marked as an estimate) and pet kinds; B gets none of it", async () => {
+    h.anthropic.length = 0;
+    let r = await owner.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "ask", plantId: plant, question: "האם זה בטוח לכלב שלי והאם יש מספיק אור?" }) });
+    expect(r.status).toBe(200);
+    const sent = JSON.stringify(h.anthropic.at(-1)!.body);
+    expect(sent).toContain("lightObservations");
+    expect(sent).toContain("NOT a calibrated light meter");
+    expect(sent).toContain("bright_indirect");
+    expect(sent).not.toMatch(/lux\\":\s*\d/); // never a fabricated lux value
+    expect(sent).toContain("\\\"kind\\\":\\\"dog\\\"");
+    expect(sent).not.toContain("בייליס"); // pet names are not sent
+    // B asks about the same plant id → B has no such plant → 404, nothing sent upstream.
+    const n = h.anthropic.length;
+    r = await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "ask", plantId: plant, question: "?" }) });
+    expect(r.status).toBe(404);
+    expect(h.anthropic.length).toBe(n);
+  });
+
+  it("identification: images reach the model as image blocks; requests are bound to the caller", async () => {
+    h.anthropic.length = 0;
+    const jpegB64 = Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64");
+    const r = await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: [jpegB64, jpegB64] }) });
+    expect(r.status).toBe(200);
+    const body = h.anthropic.at(-1)!.body as { messages: { content: { type: string; source?: { data: string; media_type: string } }[] }[] };
+    const imgs = body.messages[0].content.filter((c) => c.type === "image");
+    expect(imgs.length).toBe(2);
+    expect(imgs[0].source).toMatchObject({ media_type: "image/jpeg", data: jpegB64 });
+    expect(JSON.stringify(body)).not.toContain("פילודנדרון של A");
+    const usage = (await db.prepare(`SELECT user_id FROM user_ai_usage WHERE feature = 'identify'`).all<{ user_id: string }>()).results;
+    expect(usage.every((u) => u.user_id === bob.userId)).toBe(true);
+    // Too many / invalid images are refused with a clear code.
+    expect(await (await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: Array(5).fill(jpegB64) }) })).json()).toEqual({ error: "too_many_images" });
+    expect(await (await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: ["data:image/jpeg;base64,xx"] }) })).json()).toEqual({ error: "bad_image" });
+  });
+});
+
 describe("concurrent multi-user sync", () => {
   it("parallel pushes of three users never mix and each keeps its own ordering", async () => {
     const rounds = 6;
@@ -318,7 +390,7 @@ describe("concurrent multi-user sync", () => {
     };
     await Promise.all([run(owner, "a"), run(bob, "b"), run(carol, "c"), run(owner, "a")]);
     const [ra, rb, rc] = await Promise.all([owner.pullAll(), bob.pullAll(), carol.pullAll()]);
-    const names = (rs: { entity: string; data: Record<string, unknown> }[]) => rs.filter((r) => r.entity === "location").map((r) => String(r.data.name));
+    const names = (rs: { entity: string; id: string; data: Record<string, unknown> }[]) => rs.filter((r) => r.entity === "location" && r.id.startsWith("cc-")).map((r) => String(r.data.name));
     expect(names(ra).every((n) => n.startsWith("a-"))).toBe(true);
     expect(names(rb).every((n) => n.startsWith("b-"))).toBe(true);
     expect(names(rc).every((n) => n.startsWith("c-"))).toBe(true);

@@ -132,21 +132,30 @@ export async function createLocation(input: Partial<Location> & { name: string }
 export const updateLocation = (id: string, patch: Partial<Location>) => mutate<Location>("location", id, patch);
 
 const RANK: LightCat[] = ["low", "medium", "bright_indirect", "direct"];
-/** Light belongs to the location; the profile is built from all readings (median), never one fixed value. */
-export async function addLightReading(locationId: string, r: Omit<LightReading, "id" | "createdAt" | "locationId" | "measuredAt"> & { measuredAt?: string }) {
+export const usePlantLights = (plantId?: string) =>
+  useLiveQuery(async () => (plantId ? (await db.lights.toArray()).filter((r) => live(r) && r.plantId === plantId) : []), [plantId], undefined);
+
+/**
+ * Saves ONE light observation (the single record of it), linked to a plant and/or a location. When it has a
+ * location, that location's light profile is recomputed as the median of all its observations — never one
+ * fixed value. Estimates stay marked as estimates (`estimate: true`, method).
+ */
+export async function addLightReading(r: Omit<LightReading, "id" | "createdAt" | "measuredAt"> & { measuredAt?: string }) {
+  if (!r.plantId && !r.locationId) throw new Error("light_needs_target");
   const id = crypto.randomUUID();
-  await mutate<LightReading>("light", id, { ...r, id, locationId, measuredAt: r.measuredAt ?? nowIso(), createdAt: nowIso() });
-  const all = (await db.lights.where("locationId").equals(locationId).toArray()).filter(live);
-  const ranks = all.map((x) => RANK.indexOf(x.category)).sort((a, b) => a - b);
-  const median = ranks[Math.floor((ranks.length - 1) / 2)];
-  await updateLocation(locationId, { lightCategory: RANK[median] });
+  await mutate<LightReading>("light", id, { ...r, id, measuredAt: r.measuredAt ?? nowIso(), createdAt: nowIso() });
+  if (r.locationId) {
+    const all = (await db.lights.where("locationId").equals(r.locationId).toArray()).filter(live);
+    const ranks = all.map((x) => RANK.indexOf(x.category)).filter((x) => x >= 0).sort((a, b) => a - b);
+    const median = ranks[Math.floor((ranks.length - 1) / 2)];
+    await updateLocation(r.locationId, { lightCategory: RANK[median] });
+  }
+  return id;
 }
 
-export function luxToCategory(lux: number): LightCat {
-  if (lux < 800) return "low";
-  if (lux < 2500) return "medium";
-  if (lux < 15000) return "bright_indirect";
-  return "direct";
+export function timeOfDayNow(d = new Date()): "morning" | "noon" | "afternoon" {
+  const h = d.getHours();
+  return h < 11 ? "morning" : h < 15 ? "noon" : "afternoon";
 }
 
 // ---------- Wishlist ----------

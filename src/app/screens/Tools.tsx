@@ -5,12 +5,12 @@ import { LIGHT_LABEL, SPECIES, speciesById } from "../../shared/species.ts";
 import { recordEvent, speciesOf, updatePlant, useEvents, useLocations, usePlants } from "../data/store.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { BackButton, Button, Card, Chip, Field, InfoNote, Input, PageHeader, Select, cx, useToast } from "../ui/ui.tsx";
-import { LightReadingSheet } from "./Locations.tsx";
+import LightMeter from "./LightMeter.tsx";
 import { PropagationPanel } from "./SpeciesCare.tsx";
 
 // Exactly the ten core tools (PRODUCT_SPEC §35).
 const TOOLS: { id: string; label: string; sub: string; icon: IconName; to: string; tone: string }[] = [
-  { id: "light", label: "מד אור", sub: "מדידה והערכה", icon: "sun", to: "/tools/light", tone: "bg-sun-bg text-sun" },
+  { id: "light", label: "מד אור", sub: "הערכת אור עם המצלמה", icon: "sun", to: "/tools/light", tone: "bg-sun-bg text-sun" },
   { id: "watering", label: "עוזר השקיה", sub: "מתי לבדוק אדמה", icon: "drop", to: "/tools/watering", tone: "bg-water-bg text-water" },
   { id: "fertilizer", label: "מחשבון דישון", sub: "כמות לפי התווית", icon: "flask", to: "/tools/fertilizer", tone: "bg-sage text-green" },
   { id: "pot", label: "גודל עציץ", sub: "לאיזה עציץ לעבור", icon: "pot", to: "/tools/pot", tone: "bg-soil-bg text-soil" },
@@ -47,49 +47,6 @@ function ToolFrame({ title, subtitle, children }: { title: string; subtitle?: st
       {subtitle && <p className="mx-auto mt-1 max-w-sm text-center text-[16px] text-muted">{subtitle}</p>}
       <div className="rise mt-5 space-y-4">{children}</div>
     </main>
-  );
-}
-
-function LightMeter() {
-  const locations = useLocations() ?? [];
-  const [loc, setLoc] = useState("");
-  const [open, setOpen] = useState(false);
-  const video = useRef<HTMLVideoElement>(null);
-  const [stream, setStream] = useState<MediaStream | null>(null);
-  const [rel, setRel] = useState<number | null>(null);
-  useEffect(() => {
-    if (!stream || !video.current) return;
-    video.current.srcObject = stream; void video.current.play();
-    const c = document.createElement("canvas"); c.width = 48; c.height = 48; const g = c.getContext("2d", { willReadFrequently: true })!;
-    const t = setInterval(() => {
-      if (!video.current) return;
-      g.drawImage(video.current, 0, 0, 48, 48);
-      const d = g.getImageData(0, 0, 48, 48).data; let s = 0;
-      for (let i = 0; i < d.length; i += 4) s += 0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2];
-      setRel(Math.round((s / (d.length / 4)) / 2.55));
-    }, 500);
-    return () => clearInterval(t);
-  }, [stream]);
-  useEffect(() => () => stream?.getTracks().forEach((x) => x.stop()), [stream]);
-  return (
-    <ToolFrame title="מד אור" subtitle="iPhone לא חושף חיישן אור לאתרים — לכן לא נציג מספר לוקס מומצא.">
-      <InfoNote icon="sun" title="שלוש דרכים למדוד">שאלון קצר שנותן קטגוריית אור, הזנת ערך ממד לוקס חיצוני, או מחוון יחסי מהמצלמה להשוואה בין מקומות.</InfoNote>
-      <Field label="לאיזה מיקום?"><Select icon="pin" value={loc} onChange={(e) => setLoc(e.target.value)}><option value="">בחירת מיקום…</option>{locations.map((l) => <option key={l.id} value={l.id}>{l.name}{l.lightCategory ? ` · ${LIGHT_LABEL[l.lightCategory]}` : ""}</option>)}</Select></Field>
-      <Button icon="sun" disabled={!loc} onClick={() => setOpen(true)} className="w-full">מדידה (שאלון או לוקס)</Button>
-      <Card className="p-4">
-        <h2 className="text-[17px] font-bold text-ink">מחוון יחסי מהמצלמה</h2>
-        <p className="mt-1 text-[14px] text-muted">המצלמה מתאימה חשיפה אוטומטית, לכן זה רק כלי השוואה גס — לא מדידה.</p>
-        {stream ? (
-          <>
-            <video ref={video} playsInline muted className="mt-3 aspect-video w-full rounded-2xl object-cover" />
-            <div className="mt-3 h-3 overflow-hidden rounded-full bg-surface-2"><div className="h-full rounded-full bg-sun transition-all" style={{ width: `${rel ?? 0}%` }} /></div>
-            <div className="mt-1 text-center text-[14px] text-muted">בהירות יחסית: {rel ?? "…"} / 100</div>
-            <Button variant="text" className="w-full" onClick={() => { stream.getTracks().forEach((x) => x.stop()); setStream(null); }}>עצירה</Button>
-          </>
-        ) : <Button variant="secondary" icon="camera" className="mt-3 w-full" onClick={async () => { try { setStream(await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false })); } catch { alert("אין גישה למצלמה"); } }}>הפעלת מצלמה</Button>}
-      </Card>
-      {loc && <LightReadingSheet locationId={loc} open={open} onClose={() => setOpen(false)} />}
-    </ToolFrame>
   );
 }
 

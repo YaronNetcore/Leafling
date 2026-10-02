@@ -1,7 +1,9 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import type { PetKind, Profile } from "../../shared/types.ts";
+import type { Profile } from "../../shared/types.ts";
+import { normalizePets } from "../../shared/pets.ts";
 import { saveProfile, useProfile } from "../data/store.ts";
+import { PetsEditor } from "../ui/PetsEditor.tsx";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { Button, Field, IconButton, InfoNote, Input, Select, Wordmark, cx } from "../ui/ui.tsx";
 
@@ -13,10 +15,6 @@ const REGIONS = ["צפון", "חיפה", "מרכז", "תל אביב", "ירוש�
 const COUNTRIES = ["ישראל", "ארצות הברית", "בריטניה", "צרפת", "גרמניה", "איטליה", "ספרד", "קנדה", "אוסטרליה", "אחר"];
 const CITIES = ["תל אביב–יפו", "ירושלים", "חיפה", "ראשון לציון", "פתח תקווה", "אשדוד", "נתניה", "באר שבע", "חולון", "רמת גן", "הרצליה", "כפר סבא", "רעננה", "מודיעין", "רחובות", "אשקלון", "בת ים", "חדרה", "קריית שמונה", "אילת", "טבריה", "נצרת", "עכו", "צפת"];
 
-const PETS: { id: PetKind; label: string }[] = [
-  { id: "dog", label: "כלב" }, { id: "cat", label: "חתול" }, { id: "bird", label: "ציפור" },
-  { id: "rabbit", label: "ארנב" }, { id: "rodent", label: "מכרסם" }, { id: "reptile", label: "זוחל" }, { id: "other", label: "אחר" },
-];
 export const INTERESTS = [
   { id: "houseplants", label: "צמחי בית" }, { id: "vegetables", label: "ירקות" }, { id: "herbs", label: "עשבי תיבול" },
   { id: "flowers", label: "פרחים" }, { id: "succulents", label: "סוקולנטים" }, { id: "seeds", label: "מזרע" },
@@ -124,36 +122,12 @@ export default function Onboarding() {
     </Frame>
   );
 
-  if (step === 2) {
-    const has = (k: PetKind) => p.pets.some((x) => x.kind === k);
-    const togglePet = (k: PetKind) => set({ pets: has(k) ? p.pets.filter((x) => x.kind !== k) : [...p.pets, { kind: k, name: null }] });
-    return (
-      <Frame {...common} title="יש לך חיות מחמד?" subtitle="נשתמש במידע הזה כדי להתריע אם צמחים עלולים להיות מסוכנים לחברים הפרוותיים שלך.">
-        <div className="grid grid-cols-3 gap-3">
-          {PETS.map((pet) => (
-            <button key={pet.id} onClick={() => togglePet(pet.id)} aria-pressed={has(pet.id)}
-              className={cx("pressable relative flex flex-col items-center rounded-card p-3 shadow-soft", has(pet.id) ? "bg-sage ring-2 ring-green/70" : "bg-surface")}>
-              <img src={`/img/pets/${pet.id}.webp`} alt="" className="soft-edge aspect-square w-full object-contain" />
-              <span className="mt-1 text-[16px] font-medium text-ink">{pet.label}</span>
-              <span className={cx("absolute end-2.5 top-2.5 grid size-6 place-items-center rounded-md border-2", has(pet.id) ? "border-green bg-green text-on-green" : "border-line bg-surface")}>{has(pet.id) && <Icon name="check" size={16} strokeWidth={3} />}</span>
-            </button>
-          ))}
-          <div className="col-span-2 flex flex-col items-center justify-center rounded-card bg-sage/60 p-3 text-center text-[14px] text-muted">
-            <Icon name="plus" className="mb-1 text-green" size={28} />אפשר להוסיף שם לכל חיה עכשיו או בהמשך
-          </div>
-        </div>
-        {p.pets.length > 0 && (
-          <div className="mt-4 space-y-2">
-            {p.pets.map((pet, i) => (
-              <Input key={pet.kind} icon="paw" placeholder={`שם ל${PETS.find((x) => x.id === pet.kind)?.label} (אופציונלי)`} value={pet.name ?? ""}
-                onChange={(e) => set({ pets: p.pets.map((x, j) => (j === i ? { ...x, name: e.target.value } : x)) })} />
-            ))}
-          </div>
-        )}
-        <InfoNote icon="paw" title="למה זה חשוב?" className="mt-4">חלק מהצמחים יכולים להיות רעילים או לגרום לגירוי, בהתאם לסוג החיה ולסוג החשיפה (אכילה, מגע, עיניים וכו׳).</InfoNote>
-      </Frame>
-    );
-  }
+  if (step === 2) return (
+    <Frame {...common} title="יש לך חיות מחמד?" subtitle="נשתמש במידע הזה כדי להתריע אם צמחים עלולים להיות מסוכנים לחברים הפרוותיים שלך.">
+      <PetsEditor pets={normalizePets(p.pets)} onChange={(pets) => set({ pets })} />
+      <InfoNote icon="paw" title="למה זה חשוב?" className="mt-4">חלק מהצמחים יכולים להיות רעילים או לגרום לגירוי, בהתאם לסוג החיה ולסוג החשיפה (אכילה, מגע, עיניים וכו׳).</InfoNote>
+    </Frame>
+  );
 
   if (step === 3) return (
     <Frame {...common} title="מה את מגדלת?" subtitle="אפשר לבחור כמה אפשרויות">

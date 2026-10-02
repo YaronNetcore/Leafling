@@ -74,12 +74,19 @@ export interface Location extends BaseRecord {
   lightCategory?: LightCat | null;
 }
 
+/**
+ * One light observation. New readings are ESTIMATES: "camera_exposure" (from the photo's EXIF exposure) or
+ * "user_choice" (the user picked a category when the photo carried no exposure data). Older methods are kept
+ * only so existing records still display. Linked to a plant and/or a location.
+ */
 export interface LightReading extends BaseRecord {
-  locationId: string;
+  locationId?: string | null;
+  plantId?: string | null;
   measuredAt: string;
-  method: "manual_lux" | "questionnaire" | "camera_relative";
-  lux?: number | null;
+  method: "camera_exposure" | "user_choice" | "manual_lux" | "questionnaire" | "camera_relative";
+  lux?: number | null; // legacy manual entries only; never produced by the camera estimate
   category: LightCat;
+  estimate?: boolean;
   timeOfDay?: "morning" | "noon" | "afternoon" | null;
 }
 
@@ -127,7 +134,8 @@ export interface Reminder extends BaseRecord {
   important?: boolean;
 }
 
-export interface PetEntry { kind: PetKind; name?: string | null }
+/** One individual animal. Several pets of the same kind are allowed. `id` is missing only on pre-2026-10 profiles (see shared/pets.ts normalizePets). */
+export interface PetEntry { id?: string; kind: PetKind; name?: string | null }
 export type PetKind = "dog" | "cat" | "bird" | "rabbit" | "rodent" | "reptile" | "other";
 
 export interface Profile extends BaseRecord {

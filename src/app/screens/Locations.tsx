@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
+import { LIGHT_SOURCE_LABEL } from "../../shared/light.ts";
 import { LIGHT_LABEL, lightFit, SPECIES, speciesById } from "../../shared/species.ts";
 import type { LightCat, Location } from "../../shared/types.ts";
-import { addLightReading, createLocation, luxToCategory, moveTo, speciesOf, updateLocation, useLights, useLocation, useLocations, usePlants, useWishlist } from "../data/store.ts";
+import { createLocation, moveTo, speciesOf, updateLocation, useLights, useLocation, useLocations, usePlants, useWishlist } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
 import { BackButton, Button, Card, Chip, EmptyState, Field, IconButton, InfoNote, Input, PageHeader, PlantImage, SectionTitle, Select, Sheet, cx, useToast } from "../ui/ui.tsx";
 
@@ -91,52 +92,6 @@ export default function Locations() {
   );
 }
 
-const QUESTIONS: { q: string; a: { t: string; v: number }[] }[] = [
-  { q: "בצהריים, אפשר לקרוא כאן ספר בנוחות בלי מנורה?", a: [{ t: "בקושי", v: 0 }, { t: "כן", v: 1 }, { t: "בקלות, מואר מאוד", v: 2 }] },
-  { q: "יד מעל משטח לבן בצהריים — איך הצל?", a: [{ t: "כמעט אין צל", v: 0 }, { t: "צל רך ומטושטש", v: 1 }, { t: "צל חד וברור", v: 3 }] },
-  { q: "כמה זמן שמש ישירה מגיעה לנקודה?", a: [{ t: "אף פעם", v: 0 }, { t: "עד שעתיים", v: 1 }, { t: "2–5 שעות", v: 2 }, { t: "יותר מ־5 שעות", v: 3 }] },
-];
-function scoreToCat(s: number): LightCat { return s <= 1 ? "low" : s <= 3 ? "medium" : s <= 6 ? "bright_indirect" : "direct"; }
-
-export function LightReadingSheet({ locationId, open, onClose }: { locationId: string; open: boolean; onClose: () => void }) {
-  const toast = useToast();
-  const [mode, setMode] = useState<"q" | "lux">("q");
-  const [ans, setAns] = useState<number[]>([]);
-  const [lux, setLux] = useState("");
-  const [tod, setTod] = useState<"morning" | "noon" | "afternoon">("noon");
-  useEffect(() => { if (open) { setAns([]); setLux(""); } }, [open]);
-  const save = async (category: LightCat, method: "questionnaire" | "manual_lux", luxVal?: number) => {
-    await addLightReading(locationId, { method, category, lux: luxVal ?? null, timeOfDay: tod });
-    toast("המדידה נשמרה"); onClose();
-  };
-  return (
-    <Sheet open={open} onClose={onClose} title="מדידת אור">
-      <div className="mb-3 flex justify-center gap-2"><Chip selected={mode === "q"} onClick={() => setMode("q")}>שאלון קצר</Chip><Chip selected={mode === "lux"} onClick={() => setMode("lux")}>יש לי מד לוקס</Chip></div>
-      <div className="mb-3 flex justify-center gap-2">{([["morning", "בוקר"], ["noon", "צהריים"], ["afternoon", "אחה״צ"]] as const).map(([k, t]) => <Chip key={k} selected={tod === k} onClick={() => setTod(k)}>{t}</Chip>)}</div>
-      {mode === "q" ? (
-        <div className="space-y-4">
-          {QUESTIONS.map((qq, i) => (
-            <div key={i}><div className="mb-2 text-[16px] font-semibold text-ink">{qq.q}</div><div className="flex flex-wrap gap-2">{qq.a.map((a) => <Chip key={a.t} selected={ans[i] === a.v} onClick={() => { const n = [...ans]; n[i] = a.v; setAns(n); }}>{a.t}</Chip>)}</div></div>
-          ))}
-          {ans.filter((x) => x !== undefined).length === QUESTIONS.length && (
-            <div className="rounded-card bg-sage/70 p-4 text-center">
-              <div className="text-[14px] text-muted">הערכה</div>
-              <div className="mt-1 text-[20px] font-bold text-ink">{LIGHT_LABEL[scoreToCat(ans.reduce((a, b) => a + b, 0))]}</div>
-              <Button className="mt-3 w-full" onClick={() => save(scoreToCat(ans.reduce((a, b) => a + b, 0)), "questionnaire")}>שמירת המדידה</Button>
-            </div>
-          )}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          <Field label="ערך לוקס" hint="ממד אור חיצוני או מאפליקציית מדידה. Leafling לא ממציאה ערכי לוקס."><Input type="number" inputMode="numeric" value={lux} onChange={(e) => setLux(e.target.value)} /></Field>
-          {lux && <p className="text-center text-[15px] text-ink">≈ {LIGHT_LABEL[luxToCategory(Number(lux))]}</p>}
-          <Button className="w-full" disabled={!lux} onClick={() => save(luxToCategory(Number(lux)), "manual_lux", Number(lux))}>שמירה</Button>
-        </div>
-      )}
-    </Sheet>
-  );
-}
-
 const FIT_TEXT = { fit: ["מתאים", "bg-sage text-green"], tolerated: ["סביר — לא אידיאלי", "bg-sun-bg text-soil"], poor: ["פחות מתאים", "bg-heat-bg text-heat"] } as const;
 
 export function LocationPage() {
@@ -148,7 +103,6 @@ export function LocationPage() {
   const plants = (usePlants() ?? []).filter((p) => p.locationId === id && !p.archivedAt);
   const allPlants = usePlants() ?? [];
   const wishlist = useWishlist() ?? [];
-  const [reading, setReading] = useState(false);
   const [editing, setEditing] = useState(false);
   const [check, setCheck] = useState("");
   const options = useMemo(() => [
@@ -171,11 +125,11 @@ export function LocationPage() {
       <div className="relative -mt-6 space-y-3 rounded-t-[28px] bg-bg px-4 pt-5">
         <Card className="p-4">
           <div className="flex items-center justify-between"><h2 className="text-[18px] font-bold text-ink">פרופיל אור</h2><LightBadge cat={l.lightCategory} /></div>
-          <p className="mt-1 text-[14px] text-muted">{lights.length ? `מבוסס על ${lights.length} מדידות בזמנים שונים — לא מדידה אחת קבועה.` : "עוד אין מדידות. אפשר לענות על 3 שאלות קצרות או להזין ערך ממד לוקס."}</p>
+          <p className="mt-1 text-[14px] text-muted">{lights.length ? `מבוסס על ${lights.length} הערכות בזמנים שונים — לא מדידה אחת קבועה, ולא מד אור מכויל.` : "עוד אין מדידות. אפשר למדוד עם מצלמת הטלפון — מקבלים הערכה גסה של עוצמת האור."}</p>
           <div className="mt-3 space-y-1.5">{[...lights].sort((a, b) => b.measuredAt.localeCompare(a.measuredAt)).slice(0, 5).map((r) => (
-            <div key={r.id} className="flex items-center justify-between rounded-xl bg-bg-soft px-3 py-2 text-[14px]"><span className="text-ink">{LIGHT_LABEL[r.category]}{r.lux ? <span className="ltr ms-1 text-muted">({r.lux} lux)</span> : ""}</span><span className="text-muted">{new Date(r.measuredAt).toLocaleDateString("he-IL")} · {r.method === "manual_lux" ? "מד לוקס" : "שאלון"}</span></div>
+            <div key={r.id} className="flex items-center justify-between rounded-xl bg-bg-soft px-3 py-2 text-[14px]"><span className="text-ink">{LIGHT_LABEL[r.category]}</span><span className="text-muted">{new Date(r.measuredAt).toLocaleDateString("he-IL")} · {LIGHT_SOURCE_LABEL[r.method] ?? "הערכה"}</span></div>
           ))}</div>
-          <Button variant="secondary" icon="sun" className="mt-3 w-full" onClick={() => setReading(true)}>מדידה חדשה</Button>
+          <Button variant="secondary" icon="sun" className="mt-3 w-full" onClick={() => nav(`/tools/light?location=${l.id}`)}>מדידת אור</Button>
         </Card>
         <Card className="p-4">
           <h2 className="text-[18px] font-bold text-ink">האם צמח יתאים לכאן?</h2>
@@ -195,7 +149,6 @@ export function LocationPage() {
         <InfoNote icon="info" className="mt-4">{l.kind === "indoor" ? `בפנים${l.windowDirection ? ` · חלון ${({ north: "צפוני", south: "דרומי", east: "מזרחי", west: "מערבי" } as const)[l.windowDirection]}` : ""}${l.ac ? " · ליד מזגן" : ""}` : "בחוץ"}</InfoNote>
         <div className="h-6" />
       </div>
-      <LightReadingSheet locationId={l.id} open={reading} onClose={() => setReading(false)} />
       <Sheet open={editing} onClose={() => setEditing(false)} title="עריכת מיקום">
         <LocationForm initial={l} onSave={async (patch) => { await updateLocation(l.id, patch); setEditing(false); toast("נשמר"); }} />
         <Button variant="danger" icon="trash" className="mt-3 w-full" onClick={async () => {

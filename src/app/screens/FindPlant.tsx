@@ -31,8 +31,8 @@ export default function FindPlant() {
           <Button variant="secondary" icon="camera" onClick={() => camRef.current?.click()}>מצלמה</Button>
           <Button variant="secondary" icon="image" onClick={() => libRef.current?.click()}>גלריה</Button>
         </div>
-        <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => go(e.target.files)} />
-        <input ref={libRef} type="file" accept="image/*" multiple hidden onChange={(e) => go(e.target.files)} />
+        <input ref={camRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { go(e.target.files); e.target.value = ""; }} />
+        <input ref={libRef} type="file" accept="image/*" multiple hidden onChange={(e) => { go(e.target.files); e.target.value = ""; }} />
         <div className="mt-4"><TabRow tabs={CATS} value={cat} onChange={setCat} /></div>
         {!results.length ? <EmptyState title="לא מצאנו את הזן" text="אפשר לנסות שם אחר, לזהות לפי תמונה, או להוסיף צמח עם שם משלך." action={<Button variant="secondary" onClick={() => nav("/plants/new")} className="w-full">הוספה עם שם משלי</Button>} /> : (
           <div className="mt-4 grid grid-cols-2 gap-3">

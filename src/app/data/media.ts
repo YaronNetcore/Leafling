@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { readExif } from "../../shared/exif.ts";
 import type { Photo } from "../../shared/types.ts";
 import { db } from "./db.ts";
 import { recordEvent } from "./store.ts";
@@ -12,27 +13,10 @@ const CRC = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n+
 function crc32(u8: Uint8Array) { let c = 0xffffffff; for (let i = 0; i < u8.length; i++) c = CRC[(c ^ u8[i]) & 0xff] ^ (c >>> 8); return ((c ^ 0xffffffff) >>> 0).toString(16).padStart(8, "0"); }
 const hex = (b: ArrayBuffer) => [...new Uint8Array(b)].map((x) => x.toString(16).padStart(2, "0")).join("");
 
-/** Reads EXIF DateTimeOriginal from the "Exif\0\0" TIFF block (JPEG APP1 or HEIC item). */
-export function exifDate(u8: Uint8Array): string | null {
-  const lim = Math.min(u8.length, 512 * 1024);
-  let s = -1;
-  for (let i = 0; i < lim - 6; i++) if (u8[i] === 0x45 && u8[i + 1] === 0x78 && u8[i + 2] === 0x69 && u8[i + 3] === 0x66 && u8[i + 4] === 0 && u8[i + 5] === 0) { s = i + 6; break; }
-  if (s < 0) return null;
-  try {
-    const dv = new DataView(u8.buffer, u8.byteOffset + s, Math.min(u8.length - s, 256 * 1024));
-    const le = dv.getUint16(0) === 0x4949;
-    const u16 = (o: number) => dv.getUint16(o, le), u32 = (o: number) => dv.getUint32(o, le);
-    const ifd = (off: number) => { const tags: Record<number, { count: number; at: number }> = {}; const n = u16(off); for (let i = 0; i < n; i++) { const e = off + 2 + i * 12; tags[u16(e)] = { count: u32(e + 4), at: e + 8 }; } return tags; };
-    const ascii = (t?: { count: number; at: number }) => { if (!t) return null; const o = t.count > 4 ? u32(t.at) : t.at; let r = ""; for (let i = 0; i < t.count - 1; i++) r += String.fromCharCode(dv.getUint8(o + i)); return r; };
-    const ifd0 = ifd(u32(4));
-    const exif = ifd0[0x8769] ? ifd(u32(ifd0[0x8769].at)) : {};
-    const raw = ascii(exif[0x9003]) ?? ascii(ifd0[0x0132]);
-    const m = raw?.match(/^(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2})/);
-    return m ? new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:00`).toISOString() : null;
-  } catch { return null; }
-}
+/** EXIF DateTimeOriginal (see shared/exif.ts). */
+export const exifDate = (u8: Uint8Array): string | null => readExif(u8).dateTimeOriginal;
 
-async function decode(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
+export async function decode(file: Blob): Promise<ImageBitmap | HTMLImageElement> {
   try { return await createImageBitmap(file); } catch {
     const url = URL.createObjectURL(file);
     const img = new Image(); img.src = url; await img.decode(); URL.revokeObjectURL(url); return img;

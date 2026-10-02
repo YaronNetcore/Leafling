@@ -87,8 +87,16 @@ Multi-user isolation (2026-10-02, verified locally):
 - Tests: 18 server isolation tests (real Worker in workerd, real RS256 JWTs, legacy fixture) + 8 browser tests (same device, offline queue, legacy phone DB) — all pass; details in `docs/security/MULTI_USER.md`.
 - Also fixed: first service-worker install no longer reloads the page; a new device waits for the first pull before showing onboarding.
 
+Product fixes from real iPhone testing (2026-10-02, verified in desktop Chromium with iPhone viewport emulation — not on a real iPhone):
+- Identification photos: shared `PhotoPicker` (camera and library work independently, ≤4 images, decoded preview per image, individual removal, Hebrew errors, never silent). Root cause of the missing previews: the old picker read the live `FileList` lazily after the input was reset. AI receives EXIF/GPS-free downsized JPEG copies; originals untouched.
+- AI: code path is correct (`/api/v1/ai` → Worker → `claude-sonnet-5`); "AI not configured" means the Worker secret `ANTHROPIC_API_KEY` is absent on `leafling-preview` (one Worker serves everything; there is no separate production Worker).
+- Light Meter: one flow (aim → "מדדי אור" → category → "שייכי לצמח" → save). Estimate from the photo's EXIF exposure (iPhone browsers have no light sensor API); only four categories, always labelled as an estimate, no lux, no scores. Photo without exposure data → honest message + user-chosen category saved as the user's estimate. Saved once, linked to the plant and its location (location profile = median); shown on the plant page; sent to the AI as an estimate.
+- Pets: any number per kind (`PetEntry.id`), shared editor in onboarding + Settings; old one-per-kind profiles read without rewriting; safety warning names every affected pet by kind ("לא בטוח למיקאסה ולבייליס"); AI gets pet kinds + counts only.
+- Tests: 50 unit/integration (incl. 23 server isolation) + 24 browser tests, all passing.
+
 Not done / known issues:
-- Live deployment and the production D1 migration not verified by me: the preview URL is behind Access and I have no Cloudflare access. Owner checks are listed in `docs/security/MULTI_USER.md` §4. Pushing triggers Workers Builds only if Stage B connected this branch with root `spikes/phase0`.
+- Production verification of D1 (migration, data preservation, ownership), Worker variables/secrets and active version is blocked: no `CLOUDFLARE_API_TOKEN` in the development environment and the whole hostname is behind Access. Build→version mapping IS verified from the GitHub check runs. `npm run verify:live` runs the rest once a read-only token is provided.
+- Light estimate and photo picker not yet confirmed on a real iPhone (EXIF exposure availability from Safari camera capture is expected but unverified; the fallback covers its absence).
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.
@@ -106,12 +114,12 @@ Status of Stage B secrets not yet confirmed by the owner (the app shows "AI not 
 Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker secrets on `leafling-preview`: `ANTHROPIC_API_KEY` and `VAPID_PRIVATE_KEY` (generated in the owner's browser via `/keygen`; never stored in D1 or anywhere else). Plain variables: `OWNER_EMAIL`, `ACCESS_AUD`, `VAPID_PUBLIC_KEY`. Nothing secret in Git, source files, chat or frontend code.
 
 ## Pending owner decisions
-- After confirming isolation on the live app: add the two new users' emails to the Access policy (the developer must not add them).
+- The two additional emails were added to the Access policy by the owner (2026-10-02).
 - Approve creating production resources (Worker `leafling`, D1, R2) before entering real long-term data, or explicitly accept the preview resources as the interim home.
 - Replace reference-derived illustrations with final art (and the requested pink-variegated Alocasia icon concept) — the approved pothos icon remains in use until a new icon file is supplied.
 - Photo export mechanism (after Phase 0 P0-7).
 
 ## Next recommended step
-Owner opens the app once (this runs the migration and hands the original data to the owner), checks plants/photos/journal are all there, runs the D1 checks in `docs/security/MULTI_USER.md` §4, then adds the two emails to the Access policy and confirms each new user sees an empty app with their own onboarding.
-
-Earlier: Owner opens `https://leafling-preview.nisimy.workers.dev` on the iPhone and confirms the redesigned app loads (if not, check Workers Builds → latest build log). Then run Phase 0 tests at `/phase0/`, and decide on production resources.
+1. Owner adds a read-only Cloudflare API token (Workers Scripts Read + D1 Read, optional R2 Read) as the environment variable `CLOUDFLARE_API_TOKEN` in the Claude cloud environment → next session runs `npm run verify:live` (active version, OWNER_EMAIL/ACCESS_AUD, migration, original-data preservation).
+2. Owner adds the Worker secret `ANTHROPIC_API_KEY` (Cloudflare → Workers → `leafling-preview` → Settings → Variables and Secrets → type Secret) to enable identification.
+3. Owner opens the app once before the other two users do (claims the original data), then checks plants/photos/journal and the Settings build stamp.

@@ -911,5 +911,10 @@ Leafling now serves **three independent users**, each with a completely private 
 - **Device:** one IndexedDB database per user (`leafling-u-{userId}`: records, outbox, blobs, sync cursor). Every API call carries `X-Leafling-User` (the local database's owner); a mismatch with the signed-in identity is refused (409) and the app restarts as the new user, so one user's queued changes can never be uploaded under another. The pre-multi-user local database is imported only for the original owner.
 - **AI:** context is built server-side only from the caller's records; budget is one shared monthly cap, rate limit per user.
 
+## Product corrections (2026-10-02, owner request after iPhone testing)
+- **Light Meter (supersedes §15's three methods):** iPhone browsers expose no ambient-light sensor or camera exposure controls, so the only real signal is the EXIF exposure (time, f-number, ISO) of a photo taken in the plant's spot. `src/shared/light.ts` turns it into one of four categories (אור חלש / בינוני / חזק / שמש ישירה) with E ≈ 250·N²/(t·S); never shown as lux, always stored and sent to AI as an estimate (`estimate: true`, `method`). No questionnaire, manual lux or relative meter in the UI; older readings still display. A reading links to a plant and/or location; the location's light profile is the median of its readings.
+- **Pets:** `Profile.pets` holds individual animals (`id`, `kind`, `name`), several per kind; toxicity is judged by kind (`src/shared/pets.ts`).
+- **AI image attachments:** client sends EXIF-free downsized JPEG copies (≤1568 px, ≤4); originals untouched.
+
 ---
 *End of architecture (revision 3.1, approved 2026-09-27). Work proceeds only phase by phase with owner confirmation at each gate.*

@@ -261,12 +261,7 @@ export function searchSpecies(q: string): Species[] {
   return SPECIES.filter((s) => [s.he, s.scientific, ...s.aliases].some((name) => norm(name).includes(n)));
 }
 
-export const LIGHT_LABEL: Record<LightCat, string> = {
-  low: "אור נמוך",
-  medium: "אור בינוני",
-  bright_indirect: "אור בהיר עקיף",
-  direct: "שמש ישירה",
-};
+export { LIGHT_CATEGORY_LABEL as LIGHT_LABEL } from "./light.ts";
 
 /** Light fit for a location category: never blocks, only explains. */
 export function lightFit(sp: Species | undefined, cat: LightCat | null | undefined): "fit" | "tolerated" | "poor" | null {
