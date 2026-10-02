@@ -161,6 +161,9 @@ async function callClaude(env: AppEnv, userId: string, feature: string, plantId:
     if (e instanceof HttpError) throw e;
     const code = e instanceof Anthropic.APIError ? `ai_upstream_${e.status ?? "error"}` : "ai_request_failed";
     logEvent("ai", { feature, ms: Date.now() - t0, status: code });
+    // Failed attempts are recorded too (metadata only, no cost) so AI health is visible without log access.
+    await env.DB.prepare(`INSERT INTO user_ai_usage (user_id, at, feature, model, plant_id, input_tokens, output_tokens, image_count, est_cost_usd, latency_ms, status, context_sections) VALUES (?, ?, ?, ?, ?, 0, 0, ?, 0, ?, ?, ?)`)
+      .bind(userId, new Date().toISOString(), feature, MODEL.id, plantId, images.length, Date.now() - t0, code, sections.join(",")).run().catch(() => {});
     throw new HttpError(502, code);
   }
 }

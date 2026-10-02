@@ -57,6 +57,8 @@ export interface Harness {
   mf: Miniflare;
   signer: Signer;
   anthropic: AnthropicCall[];
+  /** When set, the mocked Anthropic API answers with this HTTP error status. */
+  anthropicStatus?: number;
   certFetches: number;
   fetch(path: string, init?: RequestInit & { token?: string | null; user?: string | null }): Promise<Response>;
 }
@@ -84,6 +86,7 @@ export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstReq
       }
       if (u.hostname === "api.anthropic.com") {
         anthropic.push({ body: await req.json() });
+        if (h.anthropicStatus) return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: h.anthropicStatus, headers: { "content-type": "application/json" } });
         const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: [{ name_he: "פוטוס", scientific: "Epipremnum aureum", confidence: "likely", why: "test" }], urgency: "none", contagious_suspected: false, retake_request: null };
         return new Response(JSON.stringify({
           id: "msg_test", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,

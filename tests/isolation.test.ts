@@ -371,6 +371,19 @@ describe("new personal data types stay per user (light, pets, identification)", 
     expect(await (await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: Array(5).fill(jpegB64) }) })).json()).toEqual({ error: "too_many_images" });
     expect(await (await bob.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: ["data:image/jpeg;base64,xx"] }) })).json()).toEqual({ error: "bad_image" });
   });
+
+  it("upstream failure: clear error code, metadata-only usage row for the caller, no key or content in the response", async () => {
+    h.anthropicStatus = 401;
+    try {
+      const r = await carol.req("/api/v1/ai", { method: "POST", body: JSON.stringify({ mode: "identify", images: [Buffer.from([0xff, 0xd8, 0xff, 0xd9]).toString("base64")] }) });
+      expect(r.status).toBe(502);
+      const text = await r.text();
+      expect(JSON.parse(text)).toEqual({ error: "ai_upstream_401" });
+      expect(text).not.toContain("test-not-a-real-key");
+      const rows = (await db.prepare(`SELECT user_id, feature, status, image_count, input_tokens, est_cost_usd FROM user_ai_usage WHERE status LIKE 'ai_upstream_%'`).all()).results;
+      expect(rows).toEqual([{ user_id: carol.userId, feature: "identify", status: "ai_upstream_401", image_count: 1, input_tokens: 0, est_cost_usd: 0 }]);
+    } finally { h.anthropicStatus = undefined; }
+  });
 });
 
 describe("concurrent multi-user sync", () => {

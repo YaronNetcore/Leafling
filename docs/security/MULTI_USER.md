@@ -84,7 +84,7 @@ caller's own rows.
 - **App export** (Settings → "ייצוא נתונים") gives each user a JSON copy of their own records.
 
 ### Automated live check
-`npm run verify:live -- <commit>` (read-only, needs `CLOUDFLARE_API_TOKEN` with Workers Scripts Read + D1 Read, optional R2 Read): maps the commit to its Workers Build and Version ID, confirms that version is active, checks Access still blocks unauthenticated requests, `ACCESS_AUD`/`OWNER_EMAIL` are set and `OWNER_EMAIL` matches the identity holding the original data, and runs the preservation checks below. Prints only counts, versions and masked values.
+`npm run verify:live -- <commit>` (read-only, needs `CLOUDFLARE_API_TOKEN` with Workers Scripts Read + D1 Read, optional R2 Read): maps the commit to its Workers Build and Version ID, confirms that version is active, checks Access still blocks unauthenticated requests, `ACCESS_AUD`/`OWNER_EMAIL` are set and `OWNER_EMAIL` matches the identity holding the original data, and runs the preservation checks below. It also checks the `DB`/`PHOTOS` bindings and the encrypted `ANTHROPIC_API_KEY` binding, accepts a dashboard secret/variable version only when its script hash equals the build's, reports AI calls per feature/status (failed attempts are recorded as metadata-only rows since 2026-10-02) and checks that every AI call with plant context used the caller's own plant. In a Claude cloud environment whose proxy injects the Cloudflare credential, no variable is needed. Prints only counts, versions and masked values.
 
 ### Checks after deploy (D1 console, read-only)
 ```sql
