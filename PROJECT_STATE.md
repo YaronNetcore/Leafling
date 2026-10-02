@@ -94,10 +94,17 @@ Product fixes from real iPhone testing (2026-10-02, verified in desktop Chromium
 - Pets: any number per kind (`PetEntry.id`), shared editor in onboarding + Settings; old one-per-kind profiles read without rewriting; safety warning names every affected pet by kind ("לא בטוח למיקאסה ולבייליס"); AI gets pet kinds + counts only.
 - Tests: 50 unit/integration (incl. 23 server isolation) + 24 browser tests, all passing.
 
+Light Meter as a live in-app camera (2026-10-02, owner feedback: the native photo flow was rejected):
+- כלים → מד אור shows a live rear-camera preview inside Leafling (getUserMedia → muted inline video), "מדדי אור" samples ≈1.4 s of frames in memory and releases the camera; no photo is taken, stored or uploaded (not in photos, journal, timelapse or R2).
+- Honest result: iPhone Safari exposes no exposure/ISO on a live stream and frames are auto-exposed, so the camera itself only concludes "אור חלש" when it stays dark at its sensitivity limit; otherwise it says it can't tell and the user names the light (hand-shadow test), saved as her estimate. No lux, no automatic "direct sun".
+- "שייכי לצמח" → only the user's own plants; saved once to the plant and the measured location (location profile = median); AI gets it as an estimate.
+- Camera released on leave, app hidden, interruption and after measuring; Hebrew messages for denied / no camera / busy / unsupported.
+- Tests: 64 unit/integration (incl. 25 server isolation) + 33 browser (14 for the Light Meter) — all pass. Headless Chromium with iPhone viewport only; NOT yet on a real iPhone.
+
 Not done / known issues:
 - Live AI not yet exercised end-to-end: the dev environment cannot pass Cloudflare Access (no signed-in browser session), so the first real identify / ask / diagnose call must be made by a signed-in user. `npm run verify:live` then shows its metadata (feature, status, image count, tokens, latency, cost — never content).
 - Not readable with the current read-only credential: R2 object listing (R2 Read) and Workers Logs (Workers Observability Read). Failed AI calls are therefore also recorded as metadata rows in `user_ai_usage` (since `e99472c`).
-- Light estimate and photo picker not yet confirmed on a real iPhone (EXIF exposure availability from Safari camera capture is expected but unverified; the fallback covers its absence).
+- Live Light Meter and photo picker not yet confirmed on a real iPhone (Safari camera permission prompt, inline preview, green camera indicator turning off). Android/desktop exposure metadata is deliberately not used (only meaningful in manual mode, device-dependent).
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.
@@ -108,6 +115,7 @@ Not done / known issues:
 - 13:33 UTC: owner added the secret `ANTHROPIC_API_KEY` in the dashboard (version `41bb1b6b`, same script hash as `5971b03c`).
 - `e99472c` (failed-AI metadata + extended verify:live) → version `dcfb0288`, ACTIVE at 100% since 13:40 UTC; secret, `ACCESS_AUD`, `OWNER_EMAIL`, D1 `DB` and R2 `PHOTOS` bindings intact (`keep_vars`).
 - Verification from the dev environment works: the cloud environment has a read-only Cloudflare credential ("Cloudflare Leafling ReadOnly") injected by the proxy for api.cloudflare.com; `npm run verify:live -- <commit>` needs no variable. 2026-10-02 run: all checks pass — migration v2, 4/4 original records for the owner, nothing unclaimed, no orphan rows in any per-user table, 2 users (owner + one more), no AI calls yet.
+- `94eac14` (live-camera Light Meter) → version `b344c47c`, ACTIVE at 100% since 14:02 UTC; secret and bindings intact; all verify:live checks pass. Still no AI call recorded in production (no signed-in test yet).
 - The live app shows its commit in Settings (footer) and at `/version.json`.
 
 ## Cloudflare resources
@@ -131,4 +139,4 @@ Planned in Stage B, entered by the owner only as encrypted Cloudflare Worker sec
 ## Next recommended step
 1. Owner runs one live AI test while signed in (one identification with a photo, one AI Botanist question on a plant, one diagnosis) → `npm run verify:live` confirms the calls (status `ok`, image counts, own-plant context).
 2. Optional: add R2 Read and Workers Observability Read to the read-only Cloudflare credential (photo-preservation check, error logs).
-3. Real-iPhone confirmation of the photo picker / light estimate; Phase 0 iPhone tests.
+3. Real-iPhone check of the live Light Meter (permission prompt, live preview, measure, assign to a plant; camera indicator off after leaving) and the photo picker; Phase 0 iPhone tests.
