@@ -1,49 +1,48 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
-import { LIGHT_CATEGORY_LABEL, LIVE_SAMPLE, SHADOW_HINT, analyzeLiveFrames, type LiveVerdict } from "../../shared/light.ts";
-import type { LightCat } from "../../shared/types.ts";
-import { CAMERA_PROBLEM_TEXT, type CameraProblem, attachPreview, cameraProblem, detachPreview, openRearCamera, sampleFrames, stopStream } from "../data/camera.ts";
+import { AUTO_LABEL, CONFIDENCE_LABEL, LightSmoother, savedCategory, type LiveState } from "../../shared/light.ts";
+import type { Plant } from "../../shared/types.ts";
+import { CAMERA_PROBLEM_TEXT, type CameraProblem, type CameraReport, attachPreview, cameraProblem, cameraReport, createSampler, detachPreview, openRearCamera, stopStream } from "../data/camera.ts";
 import { addLightReading, timeOfDayNow, useLocations, usePlants } from "../data/store.ts";
-import { Icon } from "../ui/icons.tsx";
-import { BackButton, Button, Card, Field, InfoNote, Select, cx, useToast } from "../ui/ui.tsx";
+import { PersonalPlantPicker } from "../ui/PersonalPlantPicker.tsx";
+import { BackButton, Button, InfoNote, cx, useToast } from "../ui/ui.tsx";
 
-// מד אור — a LIVE rear-camera preview inside Leafling (getUserMedia → inline <video>), no photo:
-// aim at the plant's spot → "מדדי אור" → ~1.4 s of frames are reduced in memory to brightness statistics →
-// an honest observation → "שייכי לצמח" → save. No frame is stored, uploaded or added to photos/journal/R2.
-// Auto-exposed browser frames cannot show HOW MUCH light there is (see src/shared/light.ts), so the camera
-// decides only "very dim" by itself; otherwise the user names what she sees, guided by the hand-shadow test.
+// מד אור — LIVE and AUTOMATIC. The rear camera runs inside Leafling; about 8 times a second only the target circle
+// (plus a tiny whole-frame view) is reduced in memory to a few numbers; a smoother turns them into a continuously
+// updating position on the "חשוך … שמש" scale and an automatic light category. No photo, no measure button, no
+// manual category. The signal is RELATIVE (shadow contrast/sharpness in the circle, or the camera's dark limit) —
+// iPhone browsers expose no exposure data, so there is no lux (see shared/light.ts). Nothing is stored except the
+// reading the user saves to one of HER OWN plants.
 
-const CATS: LightCat[] = ["low", "medium", "bright_indirect", "direct"];
-const TONE: Record<LightCat, string> = { low: "bg-surface-2 text-ink", medium: "bg-sage text-green", bright_indirect: "bg-sun-bg text-soil", direct: "bg-sun text-on-green" };
+const SAMPLE_MS = 125;
+const CIRCLE = 0.42; // circle diameter as a share of the preview's shorter side (the same circle is analysed)
 
 type Cam = "starting" | "live" | "off" | CameraProblem | "interrupted";
-type Phase = "aim" | "measuring" | "result";
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export default function LightMeter() {
   const nav = useNavigate();
   const toast = useToast();
   const [params] = useSearchParams();
-  const plants = (usePlants() ?? []).filter((p) => !p.archivedAt && !p.deletedAt);
-  const locations = (useLocations() ?? []).filter((l) => !l.deletedAt);
   const fromPlant = params.get("plant");
   const fromLocation = params.get("location");
+  const plants = (usePlants() ?? []).filter((p) => !p.archivedAt && !p.deletedAt);
+  const locations = useLocations() ?? [];
+  const presetPlant = plants.find((p) => p.id === fromPlant);
+  const fromLocationName = locations.find((l) => l.id === fromLocation)?.name;
 
   const video = useRef<HTMLVideoElement>(null);
+  const box = useRef<HTMLDivElement>(null);
   const stream = useRef<MediaStream | null>(null);
-  const gen = useRef(0); // bumps on every start/stop so stale async work can tell it was superseded
-  const liveSince = useRef(0);
+  const gen = useRef(0);
+  const smoother = useRef(new LightSmoother());
   const [cam, setCam] = useState<Cam>("starting");
-  const [phase, setPhase] = useState<Phase>("aim");
-  const phaseRef = useRef<Phase>("aim");
-  const setPhaseBoth = (p: Phase) => { phaseRef.current = p; setPhase(p); };
-  const [verdict, setVerdict] = useState<LiveVerdict | null>(null);
-  const [userCat, setUserCat] = useState<LightCat | null>(null);
-  const [plantId, setPlantId] = useState(fromPlant ?? "");
-  const [locationId, setLocationId] = useState(fromLocation ?? "");
+  const [live, setLive] = useState<LiveState | null>(null);
+  const [report, setReport] = useState<CameraReport | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [snapshot, setSnapshot] = useState<LiveState | null>(null);
+  const saving = useRef(false);
   const [busy, setBusy] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   const stopCamera = useCallback(() => {
     gen.current++;
@@ -56,36 +55,29 @@ export default function LightMeter() {
     stopCamera();
     const my = gen.current;
     setCam("starting");
+    smoother.current.reset();
+    setLive(null);
     try {
       const s = await openRearCamera();
-      if (my !== gen.current || !video.current) { stopStream(s); return; } // screen left / restarted meanwhile
+      if (my !== gen.current || !video.current) { stopStream(s); return; }
       stream.current = s;
-      for (const t of s.getVideoTracks()) {
-        t.addEventListener("ended", () => { if (stream.current === s) { stopCamera(); setCam("interrupted"); if (phaseRef.current === "measuring") setPhaseBoth("aim"); } });
-      }
+      const track = s.getVideoTracks()[0];
+      track?.addEventListener("ended", () => { if (stream.current === s) { stopCamera(); setCam("interrupted"); } });
       await attachPreview(video.current, s);
       if (my !== gen.current) return;
-      liveSince.current = performance.now();
+      setReport(cameraReport(track));
       setCam("live");
     } catch (e) {
       if (my === gen.current) setCam(cameraProblem(e));
     }
   }, [stopCamera]);
 
-  // Camera on while the screen is open; always released on leave/unmount (no leaked track, no camera light).
-  useEffect(() => {
-    void startCamera();
-    return () => stopCamera();
-  }, [startCamera, stopCamera]);
-
-  // Leaving the app (home screen, app switcher, locked phone) releases the camera; coming back resumes it
-  // unless a result is already on screen.
+  // Camera on while the screen is open; released on leave/unmount, when the app is hidden, on pagehide.
+  useEffect(() => { void startCamera(); return () => stopCamera(); }, [startCamera, stopCamera]);
   useEffect(() => {
     const onVis = () => {
-      if (document.visibilityState === "hidden") {
-        if (stream.current || phaseRef.current === "measuring") { stopCamera(); setCam("off"); }
-        if (phaseRef.current === "measuring") setPhaseBoth("aim");
-      } else if (phaseRef.current !== "result" && !stream.current) void startCamera();
+      if (document.visibilityState === "hidden") { if (stream.current) { stopCamera(); setCam("off"); } }
+      else if (!stream.current && !saving.current) void startCamera();
     };
     const onHide = () => stopCamera();
     document.addEventListener("visibilitychange", onVis);
@@ -93,158 +85,114 @@ export default function LightMeter() {
     return () => { document.removeEventListener("visibilitychange", onVis); window.removeEventListener("pagehide", onHide); };
   }, [startCamera, stopCamera]);
 
-  // A new entry point (different plant/location) starts a fresh measurement.
-  const key = `${fromPlant ?? ""}|${fromLocation ?? ""}`;
-  const first = useRef(true);
+  // Continuous measurement while the camera is live (stops with it — no work in the background).
   useEffect(() => {
-    if (first.current) { first.current = false; return; }
-    setVerdict(null); setUserCat(null); setSaved(false); setPhaseBoth("aim");
-    setPlantId(fromPlant ?? ""); setLocationId(fromLocation ?? "");
-    if (!stream.current) void startCamera();
-  }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (cam !== "live") return;
+    const sampler = createSampler();
+    const iv = setInterval(() => {
+      const v = video.current, b = box.current;
+      if (!v || !b) return;
+      const r = b.getBoundingClientRect();
+      const s = sampler.sample(v, { w: r.width, h: r.height, circle: CIRCLE * Math.min(r.width, r.height) });
+      if (s) setLive(smoother.current.push(s, performance.now()));
+    }, SAMPLE_MS);
+    return () => { clearInterval(iv); sampler.dispose(); };
+  }, [cam]);
 
-  const measure = async () => {
-    const v = video.current;
-    if (!v || cam !== "live" || phaseRef.current !== "aim") return;
-    const my = gen.current;
-    setPhaseBoth("measuring");
-    const settled = performance.now() - liveSince.current;
-    if (settled < LIVE_SAMPLE.warmupMs) await wait(LIVE_SAMPLE.warmupMs - settled); // let auto-exposure settle
-    const frames = my === gen.current ? await sampleFrames(v, () => my !== gen.current) : [];
-    if (my !== gen.current) return; // the camera was stopped meanwhile (screen hidden / left)
-    stopCamera(); // the preview is no longer needed
-    setCam("off");
-    setVerdict(analyzeLiveFrames(frames));
-    setUserCat(null); setSaved(false);
-    setPhaseBoth("result");
-  };
+  const ready = Boolean(cam === "live" && live?.ready && live.category);
 
-  const again = () => {
-    setVerdict(null); setUserCat(null); setSaved(false); setPhaseBoth("aim");
-    void startCamera();
-  };
-
-  const plant = plants.find((p) => p.id === plantId);
-  // The spot the user measured: the location she came from, else the chosen plant's own location, else a chosen one.
-  const fixedLocation = fromLocation || plant?.locationId || null;
-  const effectiveLocation = fixedLocation || (!plant ? locationId : "") || null;
-  const locName = (id: string | null) => locations.find((l) => l.id === id)?.name;
-  const category: LightCat | null = verdict?.kind === "dark" ? "low" : verdict?.kind === "undetermined" ? userCat : null;
-
-  const save = async () => {
-    if (!category || saved || busy) return;
-    if (!plant && !effectiveLocation) { toast("צריך לבחור צמח או מיקום"); return; }
-    setBusy(true);
+  const save = async (plant: Plant | null, reading: LiveState) => {
+    if (saving.current || !reading.category) return;
+    // A plant's own location is used when it has one; otherwise the location the meter was opened from.
+    const locationId = plant ? plant.locationId ?? fromLocation ?? null : fromLocation;
+    if (!plant && !locationId) return;
+    saving.current = true; setBusy(true);
     try {
       await addLightReading({
-        plantId: plant?.id ?? null, locationId: effectiveLocation, category, estimate: true,
-        method: verdict?.kind === "dark" ? "camera_live_dark" : "camera_live_user", timeOfDay: timeOfDayNow(),
+        plantId: plant?.id ?? null, locationId, category: savedCategory(reading.category), estimate: true, lux: null,
+        method: "camera_live_auto", confidence: reading.confidence, timeOfDay: timeOfDayNow(),
+        relative: { shadowContrast: Math.round(reading.contrast * 100) / 100, edgeSharpness: Math.round(reading.sharp * 1000) / 1000, dark: reading.dark, noShadow: reading.category === "no_shadow", algorithm: "shadow-contrast-v1" },
       });
-      setSaved(true);
+      stopCamera();
       toast(plant ? `נשמר בהיסטוריה של ${displayName(plant)}` : "נשמר בפרופיל האור של המיקום");
-      nav(plant ? `/plants/${plant.id}` : effectiveLocation ? `/locations/${effectiveLocation}` : "/tools", { replace: true });
-    } catch { toast("השמירה נכשלה — אפשר לנסות שוב"); } finally { setBusy(false); }
+      nav(plant ? `/plants/${plant.id}` : `/locations/${locationId}`, { replace: true });
+    } catch { toast("השמירה נכשלה — אפשר לנסות שוב"); saving.current = false; setBusy(false); }
   };
+  // The reading is frozen when the user taps — moving the phone while choosing a plant does not change it.
+  const openPicker = () => { if (!live || !ready) return; setSnapshot(live); setPicking(true); };
 
   const problem = cam !== "starting" && cam !== "live" && cam !== "off" ? CAMERA_PROBLEM_TEXT[cam] : null;
+  const label = live?.category ? AUTO_LABEL[live.category] : null;
 
   return (
     <main className="safe-top min-h-dvh overflow-x-hidden px-4 pb-10">
       <BackButton to={fromPlant ? `/plants/${fromPlant}` : fromLocation ? `/locations/${fromLocation}` : "/tools"} />
-      <h1 className="mt-3 text-center text-[28px] font-bold text-ink">מד אור</h1>
-      <div className="rise mt-4 space-y-4">
-        {phase !== "result" && (
-          <div className="text-center">
-            <p className="text-[18px] font-semibold text-ink">כווני את הטלפון למקום שבו הצמח נמצא</p>
-            <p className="mt-1 text-[14px] text-muted">המדידה מתבצעת בזמן אמת — אין צורך לצלם תמונה.</p>
-          </div>
-        )}
-        {/* Always mounted so the camera can restart from any state; hidden while a result or a problem shows. */}
-        <div className={cx("relative mx-auto aspect-[3/4] max-h-[58dvh] w-full overflow-hidden rounded-[28px] bg-[#23301f] shadow-soft", (problem || phase === "result") && "hidden")}>
+      <h1 className="mt-2 text-center text-[26px] font-bold text-ink">מד אור</h1>
+      <div className="rise mt-3 space-y-3">
+        {!problem && <p className="text-center text-[15px] leading-snug text-muted">כווני את העיגול למקום של הצמח, והחזיקי יד כ־30 ס״מ מעליו כך שהצל ייפול בתוך העיגול. המדידה רציפה — בלי לצלם.</p>}
+
+        <div ref={box} className={cx("relative mx-auto aspect-[3/4] max-h-[50dvh] w-full overflow-hidden rounded-[28px] bg-[#23301f] shadow-soft", problem && "hidden")}>
           <video ref={video} data-testid="light-preview" data-state={cam} className="absolute inset-0 size-full object-cover" playsInline muted autoPlay aria-label="תצוגת מצלמה חיה" />
-          <div className="pointer-events-none absolute inset-6 rounded-[22px] border-2 border-white/45" aria-hidden />
-          {cam === "starting" && (
-            <div className="absolute inset-0 grid place-items-center text-[15px] text-white/85">
-              <span className="flex items-center gap-2"><span className="size-5 rounded-full border-2 border-current border-t-transparent animate-spin" aria-hidden />מפעילה מצלמה…</span>
-            </div>
-          )}
-          {phase === "measuring" && (
-            <div data-testid="light-measuring" role="status" className="absolute inset-x-4 bottom-4 flex items-center justify-center gap-2 rounded-full bg-black/55 px-4 py-3 text-[16px] font-semibold text-white">
-              <Icon name="sun" size={20} className="animate-pulse" />מודדת את האור…
-            </div>
-          )}
+          {/* The analysed target: exactly this circle (CIRCLE × the shorter side, centred). */}
+          <div data-testid="light-target" className="pointer-events-none absolute left-1/2 top-1/2 aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full border-[3px] border-white/85 shadow-[0_0_0_9999px_rgba(20,30,18,0.18)]"
+            style={{ width: `${CIRCLE * 100}%`, maxHeight: `${CIRCLE * 100}%` }} aria-hidden />
+          {cam === "starting" && <div className="absolute inset-0 grid place-items-center text-[15px] text-white/85"><span className="flex items-center gap-2"><span className="size-5 animate-spin rounded-full border-2 border-current border-t-transparent" aria-hidden />מפעילה מצלמה…</span></div>}
         </div>
-        {phase !== "result" && (
+
+        {problem ? (
+          <div data-testid="light-camera-problem" role="alert" className="space-y-3">
+            <InfoNote icon="camera" title={problem.title}>{problem.body}</InfoNote>
+            {cam !== "unsupported" && cam !== "no_camera" && <Button variant="secondary" icon="refresh" className="w-full" onClick={() => void startCamera()}>לנסות שוב</Button>}
+          </div>
+        ) : (
           <>
-            {problem ? (
-              <div data-testid="light-camera-problem" role="alert" className="space-y-3">
-                <InfoNote icon="camera" title={problem.title}>{problem.body}</InfoNote>
-                {cam !== "unsupported" && cam !== "no_camera" && <Button variant="secondary" icon="refresh" className="w-full" onClick={() => void startCamera()}>לנסות שוב</Button>}
+            <div className="rounded-card bg-surface p-4 shadow-soft" data-testid="light-live" data-category={live?.category ?? ""} data-position={live ? live.position.toFixed(3) : ""}>
+              <div className="flex justify-between text-[13px] font-semibold text-muted"><span>חשוך</span><span>שמש ישירה</span></div>
+              <div className="relative mt-1.5 h-3 rounded-full bg-gradient-to-l from-sun via-sun-bg to-surface-2" role="meter" aria-label="עוצמת אור יחסית" aria-valuemin={0} aria-valuemax={100} aria-valuenow={live ? Math.round(live.position * 100) : 0}>
+                <span className="absolute top-1/2 size-5 -translate-y-1/2 rounded-full border-[3px] border-surface bg-green shadow-soft transition-[inset-inline-start] duration-300 ease-out"
+                  style={{ insetInlineStart: `calc(${((live?.position ?? 0) * 100).toFixed(1)}% - 10px)` }} />
               </div>
+              <p className="mt-1.5 text-center text-[12px] text-muted">מדד יחסי לפי הצל בעיגול — לא לוקס (בדפדפן של האייפון אין נתוני חשיפה)</p>
+              <div className="mt-3 text-center" aria-live="polite">
+                {cam === "live" && label && live ? (
+                  <>
+                    <div className="text-[24px] font-bold text-ink" data-testid="light-category"><span aria-hidden>{label.emoji} </span>{label.title}</div>
+                    <p className="mx-auto mt-1 max-w-sm text-[14px] leading-snug text-muted">{label.text}</p>
+                    <span className="mt-2 inline-block rounded-full bg-sage px-3 py-1 text-[12px] font-semibold text-green" data-testid="light-confidence">{CONFIDENCE_LABEL[live.confidence]} · אוטומטי</span>
+                  </>
+                ) : <div className="py-3 text-[15px] text-muted">{cam === "off" ? "המצלמה כבויה" : "מתחילה למדוד…"}</div>}
+              </div>
+            </div>
+
+            {presetPlant ? (
+              <>
+                <Button icon="leaf" className="w-full" disabled={!ready || busy} loading={busy} data-testid="light-save-preset" onClick={() => live && void save(presetPlant, live)}>שמירה ל{displayName(presetPlant)}</Button>
+                <Button variant="text" className="w-full" disabled={!ready || busy} onClick={openPicker}>שייכי לצמח אחר</Button>
+              </>
             ) : (
-              <Button data-testid="light-measure" icon="sun" className="w-full" loading={phase === "measuring"} disabled={cam !== "live"} onClick={() => void measure()}>מדדי אור</Button>
+              <>
+                <Button icon="leaf" className="w-full" disabled={!ready || busy} loading={busy} data-testid="light-assign" onClick={openPicker}>שייכי לצמח</Button>
+                {fromLocation && <Button variant="secondary" className="w-full" disabled={!ready || busy} data-testid="light-save-location" onClick={() => live && void save(null, live)}>שמירה ל{fromLocationName ? `"${fromLocationName}"` : "מיקום"} בלבד</Button>}
+              </>
             )}
+            {!ready && cam === "live" && <p className="-mt-1 text-center text-[13px] text-muted">השמירה תתאפשר כשהמדידה תתייצב.</p>}
+
+            <details className="rounded-2xl bg-bg-soft px-3 py-2 text-[13px] text-muted" data-testid="light-tech">
+              <summary className="cursor-pointer py-1 font-semibold">פרטים טכניים</summary>
+              <ul className="mt-1 space-y-1">
+                <li>מה המצלמה בדפדפן הזה חושפת: <span className="ltr" data-testid="light-capabilities">{report?.capabilities.join(", ") || "—"}</span></li>
+                <li>נתוני חשיפה (זמן חשיפה / ISO): {report?.exposureData ? "קיימים בדפדפן הזה, אבל Leafling עוד לא משתמשת בהם (לא אומתו על מכשיר)" : "לא זמינים — לכן אין לוקס"}</li>
+                <li>יחס אור/צל בעיגול: <span className="ltr">{live ? live.contrast.toFixed(2) : "—"}</span> · חדות קצה הצל: <span className="ltr">{live ? live.sharp.toFixed(2) : "—"}</span>{live?.dark ? " · המצלמה בגבול הרגישות (חשוך)" : ""}</li>
+                <li>דגימה: כ־8 פעמים בשנייה, רק העיגול. תמונות לא נשמרות ולא נשלחות.</li>
+              </ul>
+            </details>
           </>
         )}
-
-        {phase === "result" && verdict && (
-          <div data-testid="light-result" data-verdict={verdict.kind} className="space-y-4">
-            <Card className="p-5">
-              {verdict.kind === "dark" && (
-                <>
-                  <div className="text-[13px] text-muted">הערכה</div>
-                  <div className={cx("mt-1 inline-block rounded-full px-4 py-1.5 text-[22px] font-bold", TONE.low)}>{LIGHT_CATEGORY_LABEL.low}</div>
-                  <p className="mt-3 text-[14px] leading-relaxed text-muted">גם אחרי שהמצלמה הגבירה את הרגישות שלה עד הסוף, התמונה נשארה כהה — כנראה שיש מעט אור במקום. זו הערכה גסה, לא מדידה של מד אור מכויל. אם העדשה הייתה מכוסה, אפשר למדוד שוב.</p>
-                </>
-              )}
-              {verdict.kind === "undetermined" && (
-                <>
-                  <p className="text-[17px] font-semibold text-ink">המצלמה לא יכולה לדעת כמה אור יש כאן</p>
-                  <p className="mt-1 text-[14px] leading-relaxed text-muted">מצלמת הטלפון מתאימה את עצמה אוטומטית לכל תאורה, ולכן מהתמונה החיה לבד אי אפשר להבחין בין אור בינוני, חזק או שמש ישירה. מה את רואה במקום? טיפ: החזיקי יד כ-30 ס״מ מעל המקום והסתכלי על הצל.</p>
-                  {verdict.brightAreas && <p data-testid="light-bright-areas" className="mt-2 rounded-2xl bg-sun-bg px-3 py-2 text-[14px] text-soil">במצלמה נראו אזורים בהירים מאוד — אולי שמש או חלון. אם השמש נוגעת במקום עצמו, בחרי ״שמש ישירה״.</p>}
-                  <div className="mt-3 grid grid-cols-2 gap-2" data-testid="light-user-choice" role="radiogroup" aria-label="מה האור במקום">
-                    {CATS.map((c) => (
-                      <button key={c} type="button" role="radio" aria-checked={userCat === c} onClick={() => setUserCat(c)}
-                        className={cx("pressable min-h-16 rounded-2xl border px-3 py-2 text-start", userCat === c ? "border-green bg-sage" : "border-line bg-surface")}>
-                        <span className="block text-[16px] font-semibold text-ink">{LIGHT_CATEGORY_LABEL[c]}</span>
-                        <span className="block text-[13px] text-muted">{SHADOW_HINT[c]}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <p className="mt-2 text-[13px] text-muted">הבחירה נשמרת כהערכה שלך — לא כמדידה.</p>
-                </>
-              )}
-              {verdict.kind === "unstable" && <InfoNote icon="info" title="האור השתנה בזמן המדידה">ייתכן שהטלפון זז או שהתאורה מהבהבת. החזיקי את הטלפון יציב ומדדי שוב.</InfoNote>}
-              {verdict.kind === "no_frames" && <InfoNote icon="info" title="לא התקבלה תמונה מהמצלמה">אפשר למדוד שוב.</InfoNote>}
-              <Button variant="outline" size="md" icon="refresh" className="mt-4 w-full" onClick={again}>למדוד שוב</Button>
-            </Card>
-
-            {category && (
-              <Card className="space-y-3 p-4">
-                <Field label="שייכי לצמח">
-                  <Select icon="pot" value={plantId} onChange={(e) => setPlantId(e.target.value)} data-testid="light-plant">
-                    <option value="">{fromLocation ? "בלי צמח — רק למיקום" : "בחירת צמח…"}</option>
-                    {plants.map((p) => <option key={p.id} value={p.id}>{displayName(p)}</option>)}
-                  </Select>
-                </Field>
-                {fixedLocation ? (
-                  <p className="text-[14px] text-muted">{plant ? `יתווסף להיסטוריה של ${displayName(plant)} וגם לפרופיל האור של "${locName(fixedLocation) ?? "המיקום"}".` : `יתווסף לפרופיל האור של "${locName(fixedLocation) ?? "המיקום"}".`}</p>
-                ) : plant ? (
-                  <p className="text-[14px] text-muted">לצמח אין מיקום — ההערכה תישמר בהיסטוריה שלו.</p>
-                ) : locations.length > 0 ? (
-                  <Field label="או למיקום" optional>
-                    <Select icon="pin" value={locationId} onChange={(e) => setLocationId(e.target.value)} data-testid="light-location">
-                      <option value="">ללא</option>
-                      {locations.map((l) => <option key={l.id} value={l.id}>{l.name}</option>)}
-                    </Select>
-                  </Field>
-                ) : null}
-                <Button icon="check" className="w-full" loading={busy} disabled={saved || (!plant && !effectiveLocation)} onClick={save}>שמירה</Button>
-              </Card>
-            )}
-          </div>
-        )}
       </div>
+
+      <PersonalPlantPicker open={picking} onClose={() => setPicking(false)} title="לאיזה מהצמחים שלך לשייך?" currentLocationId={fromLocation}
+        onPick={(p) => { setPicking(false); if (snapshot) void save(p, snapshot); }}
+        pickLabel={(p) => (!p.locationId && fromLocation ? `יישמר גם למיקום "${fromLocationName ?? ""}"` : null)} testid="light-plant-picker" />
     </main>
   );
 }

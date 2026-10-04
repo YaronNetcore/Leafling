@@ -150,7 +150,8 @@ export async function loadPlantContext(env: AppEnv, userId: string, opts: {
     if (lights.length) {
       ctx.lightObservations = lights.map((x) => ({
         date: String(x.measuredAt).slice(0, 10), category: x.category, forThisPlant: x.plantId === plantId,
-        source: x.method === "camera_live_dark" ? "rough estimate: the live phone camera stayed dark at its sensitivity limit, i.e. a dim spot (NOT a calibrated light meter)"
+        source: x.method === "camera_live_auto" ? `automatic estimate from the live phone camera — shadow contrast in the target area${x.relative && (x.relative as { noShadow?: boolean }).noShadow ? " (no clear shadow seen)" : ""}; confidence ${x.confidence ?? "unknown"}; relative signal, NOT lux, NOT a calibrated light meter`
+          : x.method === "camera_live_dark" ? "rough estimate: the live phone camera stayed dark at its sensitivity limit, i.e. a dim spot (NOT a calibrated light meter)"
           : x.method === "camera_live_user" ? "user's own visual estimate of the spot (hand-shadow test), NOT a measurement"
           : x.method === "camera_exposure" ? "rough estimate from phone camera exposure (NOT a calibrated light meter)"
           : x.method === "user_choice" ? "user's own estimate" : x.method === "manual_lux" ? "external lux meter (user-entered)" : "older rough estimate",

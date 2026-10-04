@@ -75,7 +75,9 @@ export interface Location extends BaseRecord {
 }
 
 /**
- * One light observation. New readings (live-camera Light Meter) are ESTIMATES: "camera_live_dark" (the live
+ * One light observation. Since 2026-10 the Light Meter measures automatically and continuously: "camera_live_auto"
+ * (category from shadow contrast/sharpness in the live camera's target circle, or the camera's dark limit; see
+ * shared/light.ts). Earlier readings: "camera_live_dark" (the live
  * camera stayed dark at its sensitivity limit → low light) or "camera_live_user" (the user named the light she
  * saw in the spot, guided by the hand-shadow test, because auto-exposed frames cannot tell). Older methods
  * ("camera_exposure" photo EXIF, "user_choice", …) are kept only so existing records still display.
@@ -85,11 +87,18 @@ export interface LightReading extends BaseRecord {
   locationId?: string | null;
   plantId?: string | null;
   measuredAt: string;
-  method: "camera_live_dark" | "camera_live_user" | "camera_exposure" | "user_choice" | "manual_lux" | "questionnaire" | "camera_relative";
+  method: "camera_live_auto" | "camera_live_dark" | "camera_live_user" | "camera_exposure" | "user_choice" | "manual_lux" | "questionnaire" | "camera_relative";
   lux?: number | null; // legacy manual entries only; never produced by the camera estimate
   category: LightCat;
   estimate?: boolean;
   timeOfDay?: "morning" | "noon" | "afternoon" | null;
+  /** Automatic live reading (camera_live_auto): how sure the category is. */
+  confidence?: "high" | "medium" | "low" | null;
+  /**
+   * Automatic live reading: the RELATIVE signals it was derived from (lit/shadow ratio in the target circle, edge
+   * sharpness, camera at its dark limit, "no clear shadow"). Never lux; no image is ever stored.
+   */
+  relative?: { shadowContrast: number; edgeSharpness: number; dark: boolean; noShadow: boolean; algorithm: string } | null;
 }
 
 export interface Photo extends BaseRecord {

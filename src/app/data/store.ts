@@ -16,7 +16,8 @@ export const usePlant = (id?: string) => useLiveQuery(async () => (id ? db.plant
 export const useEvents = (plantId?: string) =>
   useLiveQuery(async () => (plantId ? (await db.events.where("plantId").equals(plantId).toArray()) : await db.events.toArray()).filter(live), [plantId], undefined);
 export const useLocations = () => useLiveQuery(async () => (await db.locations.toArray()).filter(live), [], undefined);
-export const useLocation = (id?: string | null) => useLiveQuery(async () => (id ? db.locations.get(id) : undefined), [id], undefined);
+// undefined = still loading; null = no such location for THIS user (e.g. a foreign or deleted id).
+export const useLocation = (id?: string | null) => useLiveQuery(async () => (id ? (await db.locations.get(id)) ?? null : null), [id], undefined);
 export const useLights = (locationId?: string) => useLiveQuery(async () => (locationId ? (await db.lights.where("locationId").equals(locationId).toArray()).filter(live) : []), [locationId], undefined);
 export const usePhotos = (plantId?: string) => useLiveQuery(async () => (plantId ? (await db.photos.where("plantId").equals(plantId).toArray()) : await db.photos.toArray()).filter(live), [plantId], undefined);
 export const useWishlist = () => useLiveQuery(async () => (await db.wishlist.toArray()).filter((w) => live(w) && !w.purchasedAt), [], undefined);

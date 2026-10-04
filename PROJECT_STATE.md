@@ -110,11 +110,16 @@ Product update (2026-10-02, owner requirements 1–28) — implemented, tested, 
 - Measurements: `docs/perf/AI_PERFORMANCE_2026-10.md` (real production baseline: old Botanist 17 s / identify 20–29 s until any text; local streaming pipeline overhead ≈ 50 ms).
 - Tests: 96 unit/integration/isolation + 51 browser tests, all passing (Chromium at iPhone size, mocked model).
 
+Update 2026-10-04 (owner corrections from real iPhone testing) — implemented, tested in Chromium (iPhone size), deployed:
+- Light Meter: live AND automatic — continuously updating scale + automatic category from shadow contrast/sharpness in the target circle (and the camera's dark limit); no measure button, no manual category, no photo. No lux: iPhone Safari (WebKit) exposes no exposure time/ISO/aperture — details and the real-iPhone checklist in `docs/LIGHT_METER.md`.
+- My Locations + all "which of my plants?" selectors use ONLY the user's own plants (one shared picker: personal name first, species, current location, search, empty state). "האם צמח שלי יתאים לכאן?" no longer lists catalog species; "הוספת צמח למיקום" moves the existing plant (with confirmation and a history event), never creates one. AI Botanist plant choice uses the same picker.
+- Tests: 99 unit/integration/isolation + 59 browser tests, all passing.
+
 Not done / known issues:
 - Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
 - Catalog content is an unverified editorial draft (no primary-source check yet); no licensed plant photos added yet.
 - Not readable with the current read-only credential: R2 object listing (R2 Read) and Workers Logs (Workers Observability Read). Failed AI calls are therefore also recorded as metadata rows in `user_ai_usage` (since `e99472c`).
-- Live Light Meter and photo picker not yet confirmed on a real iPhone (Safari camera permission prompt, inline preview, green camera indicator turning off). Android/desktop exposure metadata is deliberately not used (only meaningful in manual mode, device-dependent).
+- Automatic Light Meter not yet confirmed on a real iPhone (thresholds uncalibrated; checklist in docs/LIGHT_METER.md). Photo picker likewise (Safari camera permission prompt, inline preview, green camera indicator turning off). Android/desktop exposure metadata is deliberately not used (only meaningful in manual mode, device-dependent).
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.

@@ -7,7 +7,8 @@ import { attachmentUrl, discard, retry, sendMessage, settle, stop, useChatMessag
 import { MAX_IMAGES, checkFile } from "../data/images.ts";
 import { speciesOf, usePlant, usePlants } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
-import { IconButton, PlantImage, Sheet, StatusBadge, cx, useToast } from "../ui/ui.tsx";
+import { PersonalPlantPicker } from "../ui/PersonalPlantPicker.tsx";
+import { IconButton, PlantImage, StatusBadge, cx, useToast } from "../ui/ui.tsx";
 
 // AI Botanist — a real conversation (messaging-app layout): compact header with the plant, the thread as the
 // main content, a persistent composer at the bottom. History is stored per user and per plant (see data/chat.ts).
@@ -194,16 +195,8 @@ export function Botanist() {
         <input ref={cam} type="file" accept="image/*" capture="environment" hidden data-testid="chat-input-camera" onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }} />
       </div>
 
-      <Sheet open={picking} onClose={() => setPicking(false)} title="על איזה צמח לדבר?">
-        <div className="max-h-[50dvh] space-y-2 overflow-y-auto">
-          {plants.map((x) => (
-            <button key={x.id} onClick={() => { setPicking(false); setParams({ plant: x.id }, { replace: true }); }} className="pressable flex w-full items-center gap-3 rounded-2xl bg-surface p-2 text-start shadow-soft">
-              <PlantImage plant={x} species={speciesOf(x)} className="size-11" rounded="rounded-full" />
-              <span className="text-[16px] font-semibold text-ink">{displayName(x)}</span>
-            </button>
-          ))}
-        </div>
-      </Sheet>
+      <PersonalPlantPicker open={picking} onClose={() => setPicking(false)} title="על איזה מהצמחים שלך לדבר?" testid="botanist-plant-picker"
+        onPick={(x) => { setPicking(false); setParams({ plant: x.id }, { replace: true }); }} />
     </main>
   );
 }

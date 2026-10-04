@@ -1,4 +1,4 @@
-import { LIVE_SAMPLE, type FrameStats, frameStats } from "../../shared/light.ts";
+import { analyzeTarget, frameLevel, type LiveSample } from "../../shared/light.ts";
 
 // Live rear camera for the Light Meter (getUserMedia → MediaStream → inline <video>). Nothing here records,
 // stores or uploads frames: a frame is drawn into a tiny in-memory canvas, reduced to three numbers and dropped.
@@ -65,32 +65,54 @@ export function detachPreview(video: HTMLVideoElement | null) {
   video.srcObject = null;
 }
 
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+/** The circle's area in VIDEO pixels. The preview uses object-fit: cover, centred, so the on-screen circle at the
+ * container's centre maps to the video's centre, scaled by the cover factor. Recomputed every sample, so rotation
+ * and resolution changes are followed. */
+export function targetInVideo(vw: number, vh: number, boxW: number, boxH: number, circleCss: number) {
+  const scale = Math.max(boxW / vw, boxH / vh);
+  const size = Math.min(vw, vh, circleCss / scale);
+  return { sx: (vw - size) / 2, sy: (vh - size) / 2, size };
+}
 
+const TARGET_PX = 48;
 /**
- * Samples the live preview for a short interval (≈1.4 s) and returns per-frame statistics. Each frame is drawn
- * into a 64×48 in-memory canvas, reduced to numbers and overwritten by the next; the canvas is released at the end.
- * `isCancelled` lets the caller abort when the screen is left or hidden mid-measurement.
+ * Live sampler: each call draws ONLY the circle's square into a 48×48 in-memory canvas (and the whole frame into a
+ * 16×12 one for the dark check), reduces both to a few numbers and overwrites them on the next call. No pixels
+ * are kept, stored or sent anywhere. `dispose()` releases the canvases.
  */
-export async function sampleFrames(video: HTMLVideoElement, isCancelled: () => boolean): Promise<FrameStats[]> {
-  const canvas = document.createElement("canvas");
-  canvas.width = LIVE_SAMPLE.width;
-  canvas.height = LIVE_SAMPLE.height;
-  const g = canvas.getContext("2d", { willReadFrequently: true });
-  const out: FrameStats[] = [];
-  try {
-    if (!g) return out;
-    for (let i = 0; i < LIVE_SAMPLE.frames && !isCancelled(); i++) {
-      if (video.readyState >= 2 && video.videoWidth > 0) {
-        g.drawImage(video, 0, 0, canvas.width, canvas.height);
-        out.push(frameStats(g.getImageData(0, 0, canvas.width, canvas.height).data));
-      }
-      await wait(LIVE_SAMPLE.intervalMs);
-    }
-    return out;
-  } finally {
-    g?.clearRect(0, 0, canvas.width, canvas.height);
-    canvas.width = 0;
-    canvas.height = 0;
-  }
+export function createSampler() {
+  const t = document.createElement("canvas"); t.width = TARGET_PX; t.height = TARGET_PX;
+  const f = document.createElement("canvas"); f.width = 16; f.height = 12;
+  const gt = t.getContext("2d", { willReadFrequently: true });
+  const gf = f.getContext("2d", { willReadFrequently: true });
+  return {
+    sample(video: HTMLVideoElement, box: { w: number; h: number; circle: number }): LiveSample | null {
+      if (!gt || !gf || video.readyState < 2 || !video.videoWidth || !video.videoHeight) return null;
+      const g = targetInVideo(video.videoWidth, video.videoHeight, box.w, box.h, box.circle);
+      gt.drawImage(video, g.sx, g.sy, g.size, g.size, 0, 0, TARGET_PX, TARGET_PX);
+      gf.drawImage(video, 0, 0, 16, 12);
+      const target = analyzeTarget(gt.getImageData(0, 0, TARGET_PX, TARGET_PX).data, TARGET_PX, TARGET_PX);
+      const fr = frameLevel(gf.getImageData(0, 0, 16, 12).data);
+      gt.clearRect(0, 0, TARGET_PX, TARGET_PX); gf.clearRect(0, 0, 16, 12);
+      return { target, frameMean: fr.mean, frameP95: fr.p95 };
+    },
+    dispose() { t.width = 0; t.height = 0; f.width = 0; f.height = 0; },
+  };
+}
+
+/** What THIS browser really exposes about the camera (shown under "פרטים טכניים"; nothing is stored). */
+export interface CameraReport { supported: string[]; capabilities: string[]; settings: Record<string, string>; exposureData: boolean }
+const INTERESTING = ["exposureMode", "exposureTime", "exposureCompensation", "iso", "whiteBalanceMode", "colorTemperature", "brightness", "focusDistance", "zoom", "torch", "frameRate", "width", "height", "facingMode"];
+export function cameraReport(track: MediaStreamTrack | undefined): CameraReport {
+  const sup = (navigator.mediaDevices?.getSupportedConstraints?.() ?? {}) as Record<string, boolean>;
+  const caps = (track?.getCapabilities?.() ?? {}) as Record<string, unknown>;
+  const set = (track?.getSettings?.() ?? {}) as Record<string, unknown>;
+  const settings: Record<string, string> = {};
+  for (const k of INTERESTING) if (k in set) settings[k] = String(typeof set[k] === "number" ? Math.round((set[k] as number) * 100) / 100 : set[k]);
+  return {
+    supported: INTERESTING.filter((k) => sup[k]),
+    capabilities: INTERESTING.filter((k) => k in caps),
+    settings,
+    exposureData: "exposureTime" in caps && "iso" in caps,
+  };
 }

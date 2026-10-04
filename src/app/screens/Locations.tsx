@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { displayName } from "../../shared/domain.ts";
 import { LIGHT_SOURCE_LABEL } from "../../shared/light.ts";
-import { LIGHT_LABEL, lightFit, SPECIES, speciesById } from "../../shared/species.ts";
-import type { LightCat, Location } from "../../shared/types.ts";
-import { createLocation, moveTo, speciesOf, updateLocation, useLights, useLocation, useLocations, usePlants, useWishlist } from "../data/store.ts";
+import { LIGHT_LABEL, lightFit } from "../../shared/species.ts";
+import type { LightCat, Location, Plant } from "../../shared/types.ts";
+import { useCatalog } from "../data/catalog.ts";
+import { createLocation, moveTo, speciesOf, updateLocation, useLights, useLocation, useLocations, usePlants } from "../data/store.ts";
+import { PersonalPlantPicker, plantLines } from "../ui/PersonalPlantPicker.tsx";
 import { Icon } from "../ui/icons.tsx";
-import { BackButton, Button, Card, Chip, EmptyState, Field, IconButton, InfoNote, Input, PageHeader, PlantImage, SectionTitle, Select, Sheet, cx, useToast } from "../ui/ui.tsx";
+import { BackButton, Button, Card, Chip, EmptyState, Field, IconButton, InfoNote, Input, PageHeader, PlantImage, SectionTitle, Select, Sheet, StatusBadge, cx, useToast } from "../ui/ui.tsx";
 
 export function placeImage(l: Pick<Location, "name" | "kind">): string {
   const n = l.name;
@@ -94,26 +96,56 @@ export default function Locations() {
 
 const FIT_TEXT = { fit: ["מתאים", "bg-sage text-green"], tolerated: ["סביר — לא אידיאלי", "bg-sun-bg text-soil"], poor: ["פחות מתאים", "bg-heat-bg text-heat"] } as const;
 
+const RANK: LightCat[] = ["low", "medium", "bright_indirect", "direct"];
+
+/** Light needs of ONE personal plant, from its species (curated page or catalog entry) — null when unknown. */
+function usePlantLightNeeds(p: Plant | undefined): { text: string; fit: (cat: LightCat) => "fit" | "tolerated" | "poor" } | null {
+  const catalog = useCatalog();
+  if (!p) return null;
+  const sp = speciesOf(p);
+  if (sp) return { text: sp.light.text, fit: (cat) => lightFit(sp, cat) ?? "poor" };
+  const e = p.speciesId ? catalog?.byId.get(p.speciesId) : undefined;
+  if (e?.care.light?.length) {
+    const ideal = e.care.light;
+    return {
+      text: ideal.map((c) => LIGHT_LABEL[c]).join(" · "),
+      fit: (cat) => (ideal.includes(cat) ? "fit" : ideal.some((c) => Math.abs(RANK.indexOf(c) - RANK.indexOf(cat)) === 1) ? "tolerated" : "poor"),
+    };
+  }
+  return null;
+}
+
 export function LocationPage() {
   const { id } = useParams();
   const nav = useNavigate();
   const toast = useToast();
   const l = useLocation(id);
   const lights = useLights(id) ?? [];
-  const plants = (usePlants() ?? []).filter((p) => p.locationId === id && !p.archivedAt);
-  const allPlants = usePlants() ?? [];
-  const wishlist = useWishlist() ?? [];
+  const allPlants = (usePlants() ?? []).filter((p) => !p.archivedAt && !p.deletedAt);
+  const plants = allPlants.filter((p) => p.locationId === id);
+  const locations = useLocations() ?? [];
   const [editing, setEditing] = useState(false);
-  const [check, setCheck] = useState("");
-  const options = useMemo(() => [
-    ...allPlants.filter((p) => p.speciesId).map((p) => ({ key: `p:${p.id}`, label: `${displayName(p)} (שלי)`, sp: speciesById(p.speciesId) })),
-    ...wishlist.map((w) => ({ key: `w:${w.id}`, label: `${speciesById(w.speciesId)?.he ?? ""} (חלומות)`, sp: speciesById(w.speciesId) })),
-    ...SPECIES.map((s) => ({ key: `s:${s.id}`, label: s.he, sp: s })),
-  ], [allPlants, wishlist]);
+  // "Will it fit?" and "add a plant here" pick from MY plants only (never the general catalog).
+  const [checkId, setCheckId] = useState<string | null>(null);
+  const [pickFor, setPickFor] = useState<"check" | "add" | null>(null);
+  const [moving, setMoving] = useState<Plant | null>(null);
+  const checked = allPlants.find((p) => p.id === checkId);
+  const needs = usePlantLightNeeds(checked);
   if (l === undefined) return <div className="p-6"><div className="skeleton h-60 rounded-card" /></div>;
   if (!l || l.deletedAt) return <EmptyState title="המיקום לא נמצא" action={<Button onClick={() => nav("/locations")} className="w-full">למיקומים</Button>} />;
-  const chosen = options.find((o) => o.key === check);
-  const fit = chosen ? lightFit(chosen.sp, l.lightCategory) : null;
+  const fit = checked && needs && l.lightCategory ? needs.fit(l.lightCategory) : null;
+  const locName = (lid?: string | null) => locations.find((x) => x.id === lid)?.name;
+  const doMove = async (p: Plant) => {
+    // Moving = updating the existing plant record (its history records the move); never a new plant.
+    await moveTo(p, l.id);
+    setMoving(null);
+    toast(`${displayName(p)} עבר/ה ל${l.name}`);
+  };
+  const onPickAdd = (p: Plant) => {
+    setPickFor(null);
+    if (p.locationId === l.id) { toast(`${displayName(p)} כבר כאן`); return; }
+    if (p.locationId && locName(p.locationId)) setMoving(p); else void doMove(p);
+  };
   return (
     <div>
       <div className="relative h-60 overflow-hidden">
@@ -131,24 +163,56 @@ export function LocationPage() {
           ))}</div>
           <Button variant="secondary" icon="sun" className="mt-3 w-full" onClick={() => nav(`/tools/light?location=${l.id}`)}>מדידת אור</Button>
         </Card>
+        <SectionTitle>הצמחים כאן</SectionTitle>
+        {!plants.length ? <p className="px-1 text-muted" data-testid="location-no-plants">אין כאן צמחים עדיין.</p> : (
+          <div className="space-y-2" data-testid="location-plants">
+            {plants.map((p) => {
+              const ln = plantLines(p);
+              return (
+                <button key={p.id} data-plant-id={p.id} data-testid="location-plant" onClick={() => nav(`/plants/${p.id}`)} className="pressable flex w-full items-center gap-3 rounded-2xl bg-surface p-2.5 text-start shadow-soft">
+                  <PlantImage plant={p} species={speciesOf(p)} className="size-14 shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="truncate text-[16px] font-bold text-ink">{ln.title}</div>
+                    {(ln.species || ln.sci) && <div className="truncate text-[13px] text-muted">{ln.species}{ln.species && ln.sci ? " · " : ""}{ln.sci && <span className="sci">{ln.sci}</span>}</div>}
+                  </div>
+                  {p.status !== "plant" && <StatusBadge status={p.status} />}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <Button variant="secondary" icon="plus" className="w-full" data-testid="location-add-plant" onClick={() => setPickFor("add")}>הוספת צמח למיקום</Button>
         <Card className="p-4">
-          <h2 className="text-[18px] font-bold text-ink">האם צמח יתאים לכאן?</h2>
-          <Select value={check} onChange={(e) => setCheck(e.target.value)} aria-label="בחירת צמח"><option value="">בחירת צמח…</option>{options.map((o) => <option key={o.key} value={o.key}>{o.label}</option>)}</Select>
-          {chosen?.sp && (
-            <div className="mt-3 rounded-2xl bg-bg-soft p-3 text-[15px]">
-              {fit ? <span className={cx("rounded-full px-3 py-1 text-[13px] font-semibold", FIT_TEXT[fit][1])}>{FIT_TEXT[fit][0]}</span> : <span className="text-muted">צריך קודם מדידת אור כדי להשוות.</span>}
-              <p className="mt-2 leading-relaxed text-text">{chosen.sp.he} מעדיף/ה: {chosen.sp.light.text}</p>
+          <h2 className="text-[18px] font-bold text-ink">האם צמח שלי יתאים לכאן?</h2>
+          <button type="button" data-testid="location-fit-pick" onClick={() => setPickFor("check")} className="pressable mt-2 flex min-h-12 w-full items-center gap-3 rounded-2xl bg-bg-soft px-3 py-2 text-start">
+            {checked ? <PlantImage plant={checked} species={speciesOf(checked)} className="size-9 shrink-0" rounded="rounded-full" /> : <Icon name="pot" className="text-green" />}
+            <span className="flex-1 text-[15px] text-ink">{checked ? displayName(checked) : "בחירה מהצמחים שלי…"}</span>
+            <Icon name="down" size={18} className="text-muted" />
+          </button>
+          {checked && (
+            <div className="mt-3 rounded-2xl bg-bg-soft p-3 text-[15px]" data-testid="location-fit">
+              {!needs ? <span className="text-muted">אין מידע כללי על צרכי האור של הזן של הצמח הזה.</span>
+                : fit ? <span className={cx("rounded-full px-3 py-1 text-[13px] font-semibold", FIT_TEXT[fit][1])}>{FIT_TEXT[fit][0]}</span> : <span className="text-muted">צריך קודם מדידת אור כדי להשוות.</span>}
+              {needs && <p className="mt-2 leading-relaxed text-text">{displayName(checked)} ({checked.commonName}) מעדיף/ה: {needs.text}</p>}
               <p className="mt-1 text-[13px] text-muted">זו המלצה בלבד — אפשר למקם בכל מקום, ונעקוב יחד.</p>
             </div>
           )}
         </Card>
-        <SectionTitle>הצמחים כאן</SectionTitle>
-        {!plants.length ? <p className="px-1 text-muted">אין כאן צמחים עדיין.</p> : (
-          <div className="grid grid-cols-3 gap-2">{plants.map((p) => <button key={p.id} onClick={() => nav(`/plants/${p.id}`)} className="pressable text-center"><PlantImage plant={p} species={speciesOf(p)} className="aspect-square w-full" /><div className="mt-1 truncate text-[13px] text-ink">{displayName(p)}</div></button>)}</div>
-        )}
         <InfoNote icon="info" className="mt-4">{l.kind === "indoor" ? `בפנים${l.windowDirection ? ` · חלון ${({ north: "צפוני", south: "דרומי", east: "מזרחי", west: "מערבי" } as const)[l.windowDirection]}` : ""}${l.ac ? " · ליד מזגן" : ""}` : "בחוץ"}</InfoNote>
         <div className="h-6" />
       </div>
+      <PersonalPlantPicker open={pickFor !== null} onClose={() => setPickFor(null)} currentLocationId={l.id} testid="location-plant-picker"
+        title={pickFor === "add" ? `איזה צמח שלך להעביר ל${l.name}?` : "איזה צמח שלך לבדוק?"}
+        onPick={(p) => { if (pickFor === "check") { setCheckId(p.id); setPickFor(null); } else onPickAdd(p); }} />
+      <Sheet open={moving !== null} onClose={() => setMoving(null)} title="להעביר את הצמח?">
+        {moving && (
+          <div className="space-y-3" data-testid="location-move-confirm">
+            <p className="text-center text-[15px] text-ink">{displayName(moving)} נמצא/ת כרגע ב"{locName(moving.locationId)}". להעביר ל"{l.name}"? זה אותו צמח — רק המיקום שלו משתנה, וההעברה נרשמת בהיסטוריה שלו.</p>
+            <Button className="w-full" icon="move" onClick={() => void doMove(moving)}>להעביר ל{l.name}</Button>
+            <Button variant="text" className="w-full" onClick={() => setMoving(null)}>ביטול</Button>
+          </div>
+        )}
+      </Sheet>
       <Sheet open={editing} onClose={() => setEditing(false)} title="עריכת מיקום">
         <LocationForm initial={l} onSave={async (patch) => { await updateLocation(l.id, patch); setEditing(false); toast("נשמר"); }} />
         <Button variant="danger" icon="trash" className="mt-3 w-full" onClick={async () => {

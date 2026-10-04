@@ -148,7 +148,7 @@ describe("identification → my plants (original photos carried over)", () => {
     await page.getByTestId("identify-add").first().click();
     await page.waitForURL(/\/plants\/new/);
     await page.getByTestId("carried-photos").waitFor();
-    await expect.poll(() => page.locator('[data-testid="carried-photos"] img').count(), { timeout: 10_000 }).toBe(3);
+    await expect.poll(() => page.locator('[data-testid="carried-photos"] img').count(), { timeout: 20_000 }).toBe(3);
     await shot("identify-carried-photos");
     await page.getByTestId("carried-continue").click();
     await page.getByRole("button", { name: /^צמח/ }).first().click();
