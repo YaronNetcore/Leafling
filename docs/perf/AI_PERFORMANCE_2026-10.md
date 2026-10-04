@@ -16,6 +16,15 @@ are asked for brief fields. The new path records `first_token_ms` per call; the 
 deploy will give the real "after" numbers via `npm run verify:live` — **not measured yet** (Access requires a
 signed-in browser; this environment has none).
 
+## 1b. Production AFTER the update (real Claude, owner's own use on 2026-10-02, metadata only)
+| Feature | Calls | Output tokens | First visible text | Total |
+|---|---|---|---|---|
+| AI Botanist chat (streaming) | 6 | 72–332 | **0.84–1.08 s** | 2.7–7.9 s |
+| Identification (structured, brief fields) | 8 | 663–1,050 | = total (not streamed) | 11.6–18.5 s |
+
+Chat: first text ~16× sooner than the old Botanist (17 s); answers ~3× shorter. Identification: ~35 % faster.
+Remaining main latency source for identification: the model writing structured JSON before anything can be shown.
+
 ## 2. Local pipeline with a mocked streaming model (0.8 s to first token, ~2 s total), DevTools "Slow 4G" (150 ms RTT, 1.6/0.75 Mbps)
 Headless Chromium at iPhone size, production build, real Worker (Miniflare) + local D1/R2. Times in ms.
 | Case | Images | Image prep | First byte | First visible text | Total | Context DB | Persist user msg | Prompt chars |

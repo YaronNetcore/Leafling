@@ -114,6 +114,7 @@ Update 2026-10-04 (owner corrections from real iPhone testing) — implemented, 
 - Light Meter: live AND automatic — continuously updating scale + automatic category from shadow contrast/sharpness in the target circle (and the camera's dark limit); no measure button, no manual category, no photo. No lux: iPhone Safari (WebKit) exposes no exposure time/ISO/aperture — details and the real-iPhone checklist in `docs/LIGHT_METER.md`.
 - My Locations + all "which of my plants?" selectors use ONLY the user's own plants (one shared picker: personal name first, species, current location, search, empty state). "האם צמח שלי יתאים לכאן?" no longer lists catalog species; "הוספת צמח למיקום" moves the existing plant (with confirmation and a history event), never creates one. AI Botanist plant choice uses the same picker.
 - Tests: 99 unit/integration/isolation + 59 browser tests, all passing.
+- Deployed: `aad09f3` → Worker version `80ba93c0`, ACTIVE at 100% (2026-10-04). Schema v3 applied in production. Real chat timings: first text 0.84–1.08 s (was 17 s before streaming); identify 11.6–18.5 s (was 20–29 s) — `docs/perf/AI_PERFORMANCE_2026-10.md`.
 
 Not done / known issues:
 - Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
