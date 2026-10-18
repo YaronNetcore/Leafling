@@ -1,8 +1,8 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { ACTION_LABEL, SOIL_LABEL, type ActionProposal } from "../../shared/actions.ts";
+import { ACTION_LABEL, DESTRUCTIVE, SOIL_LABEL, isRecordKind, type ActionProposal } from "../../shared/actions.ts";
 import { aiErrorText } from "../data/ai.ts";
-import { cancelProposal, confirmProposal } from "../data/actions.ts";
+import { cancelProposal, confirmProposal, requestUndo } from "../data/actions.ts";
 import { Icon, type IconName } from "./icons.tsx";
 import { Button, cx } from "./ui.tsx";
 
@@ -10,7 +10,10 @@ import { Button, cx } from "./ui.tsx";
 // "אישור ושמירה"; the list can be shown and edited (individual plants removed) first. The card's state comes from
 // the server-written message, so it is the same after a reload or on another device.
 
-const ICON: Record<ActionProposal["action"], IconName> = { water: "drop", fertilize: "flask", soil_check: "drop", treatment: "steth", move: "move", reminder: "bell", note: "edit" };
+const ICON: Record<ActionProposal["action"], IconName> = {
+  water: "drop", fertilize: "flask", soil_check: "drop", treatment: "steth", move: "move", reminder: "bell", note: "edit",
+  resolve_issue: "check", remove_issue: "trash", delete_records: "trash", redate_records: "calendar", edit_records: "edit", cancel_reminders: "bell", redate_reminders: "calendar", undo: "refresh",
+};
 const NOTE: Record<string, string> = { already_recorded: "כבר נרשם באותו יום", already_there: "כבר שם", excluded: "הוצא מהרשימה" };
 const fmt = (iso: string) => new Date(iso).toLocaleDateString("he-IL", { day: "numeric", month: "numeric" });
 
@@ -25,7 +28,13 @@ export function ActionCard({ p }: { p: ActionProposal }) {
   const [result, setResult] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
   const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [undoState, setUndoState] = useState<null | "busy" | "asked" | string>(null);
   const nav = useNavigate();
+  const records = isRecordKind(p.action);
+  const askUndo = async () => {
+    setUndoState("busy");
+    try { await requestUndo(p); setUndoState("asked"); } catch (e) { setUndoState((e as Error).message === "already_undone" ? "הפעולה כבר בוטלה." : "לא הצלחתי להכין ביטול — נסי שוב."); }
+  };
 
   const status = result ? "done" : cancelled ? "cancelled" : p.status;
   if (status === "superseded") return <p className="me-auto px-2 text-[13px] text-muted" data-testid="action-status">ההצעה עודכנה — ראו למטה.</p>;
@@ -35,9 +44,15 @@ export function ActionCard({ p }: { p: ActionProposal }) {
     return (
       <div className="me-auto space-y-1.5 px-2">
         <p className={cx("flex items-center gap-1.5 text-[13px] font-semibold", saved ? "text-green" : "text-heat")} data-testid="action-status">
-          <Icon name={saved ? "check" : "info"} size={16} />{result ?? (!saved ? "לא נשמר אף צמח" : `${saved === 1 ? "נשמר לצמח אחד" : `נשמר ל־${saved} צמחים`}${status === "partial" ? " · חלק לא נשמרו" : ""}`)}
+          <Icon name={saved ? "check" : "info"} size={16} />{result ?? (!saved ? (records ? "לא שונה אף רישום" : "לא נשמר אף צמח") : records ? `${ACTION_LABEL[p.action]} בוצע${saved > 1 ? ` ב־${saved} צמחים` : ""}` : `${saved === 1 ? "נשמר לצמח אחד" : `נשמר ל־${saved} צמחים`}${status === "partial" ? " · חלק לא נשמרו" : ""}`)}
         </p>
-        {saved > 0 && <Button size="sm" variant="secondary" icon="leaf" data-testid="action-view" onClick={() => nav(`/updates/${p.id}`)}>צפייה בצמחים שעודכנו</Button>}
+        <div className="flex flex-wrap gap-2">
+          {saved > 0 && <Button size="sm" variant="secondary" icon="leaf" data-testid="action-view" onClick={() => nav(`/updates/${p.id}`)}>צפייה בצמחים שעודכנו</Button>}
+          {saved > 0 && !p.undoneBy && undoState !== "asked" && <Button size="sm" variant="text" icon="refresh" data-testid="action-undo" disabled={undoState === "busy"} onClick={() => void askUndo()}>ביטול הפעולה</Button>}
+        </div>
+        {p.undoneBy && <p className="text-[13px] text-muted" data-testid="action-undone">הפעולה הזו בוטלה.</p>}
+        {undoState === "asked" && <p className="text-[13px] text-muted">הכנתי כרטיס ביטול למטה — שום דבר לא ישתנה לפני האישור.</p>}
+        {undoState && undoState !== "busy" && undoState !== "asked" && <p className="text-[13px] text-heat" role="alert">{undoState}</p>}
       </div>
     );
   }
@@ -61,21 +76,28 @@ export function ActionCard({ p }: { p: ActionProposal }) {
     try { await cancelProposal(p); setCancelled(true); } catch { setError("לא הצלחתי לבטל — נסי שוב."); } finally { setBusy(null); }
   };
 
-  const rows: [string, string][] = [
+  const nRecords = p.targets.filter((t) => sel.has(t.plantId)).reduce((k, t) => k + (t.records?.length ?? 0), 0);
+  const rows: [string, string][] = records ? [["פעולה", ACTION_LABEL[p.action]]] : [
     ["פעולה", p.action === "soil_check" ? `${ACTION_LABEL.soil_check} · ${SOIL_LABEL[p.details.soil ?? "slightly_moist"]}` : ACTION_LABEL[p.action]],
     [p.action === "reminder" ? "מתי" : "תאריך", p.dateLabel],
   ];
+  if (records && p.details.recordsLabel && p.action !== "undo") rows.push(["מה", p.details.recordsLabel]);
+  if (records && p.action === "undo") rows.push(["מה", p.details.undoTitle ?? ""]);
+  if (records && p.details.newDateLabel) rows.push([p.action === "redate_reminders" ? "מועד חדש" : "תאריך נכון", p.details.newDateLabel]);
+  if (records && p.details.newProduct) rows.push(["חומר נכון", p.details.newProduct]);
+  if (records && p.details.newPest) rows.push(["בעיה נכונה", p.details.newPest]);
+  if (records) rows.push(["רישומים", `${nRecords} ב־${n === 1 ? "צמח אחד" : `${n} צמחים`}`]);
   if (p.details.product) rows.push(["חומר", p.details.productActive ? `${p.details.product} · ${p.details.productActive}` : p.details.product]);
-  if (p.details.pest) rows.push(["בעיה", `${p.details.pest} · דיווח שלך, לא אומת`]);
+  if (p.details.pest && !records) rows.push(["בעיה", `${p.details.pest} · דיווח שלך, לא אומת`]);
   if (p.details.toLocationName) rows.push(["לאן", p.details.toLocationName]);
   if (p.details.reminderText) rows.push(["תזכורת", p.details.reminderText]);
   if (p.details.note) rows.push(["הערה", p.details.note]);
 
   return (
-    <section data-testid="action-card" aria-label="אישור עדכון" className="me-auto w-[92%] rounded-3xl border border-line bg-surface p-4 shadow-soft">
+    <section data-testid="action-card" data-action={p.action} aria-label="אישור עדכון" className={cx("me-auto w-[92%] rounded-3xl border bg-surface p-4 shadow-soft", DESTRUCTIVE.includes(p.action) ? "border-urgent/40" : "border-line")}>
       <h3 className="flex items-center gap-2 text-[17px] font-bold text-ink">
-        <span className="grid size-9 place-items-center rounded-full bg-sage text-green"><Icon name={ICON[p.action]} size={19} /></span>
-        <span data-testid="action-title">{n === 1 ? "זיהיתי עדכון לצמח אחד 🌿" : `זיהיתי עדכון ל־${n} צמחים 🌿`}</span>
+        <span className={cx("grid size-9 place-items-center rounded-full", DESTRUCTIVE.includes(p.action) ? "bg-sun-bg text-urgent" : "bg-sage text-green")}><Icon name={ICON[p.action]} size={19} /></span>
+        <span data-testid="action-title">{records ? (p.action === "undo" ? `ביטול פעולה: ${nRecords} רישומים` : `${ACTION_LABEL[p.action]}: ${nRecords === 1 ? "רישום אחד" : `${nRecords} רישומים`} ב־${n === 1 ? "צמח אחד" : `${n} צמחים`}`) : n === 1 ? "זיהיתי עדכון לצמח אחד 🌿" : `זיהיתי עדכון ל־${n} צמחים 🌿`}</span>
       </h3>
       <dl className="mt-3 space-y-1.5 text-[15px]">
         {rows.map(([k, v]) => <div key={k} className="flex gap-2"><dt className="w-16 shrink-0 text-muted">{k}</dt><dd className="min-w-0 flex-1 text-ink">{v}</dd></div>)}
@@ -101,6 +123,7 @@ export function ActionCard({ p }: { p: ActionProposal }) {
                 <span className="min-w-0 flex-1">
                   <span className={cx("block truncate text-[15px] font-semibold", on ? "text-ink" : "text-muted line-through")}>{t.name}</span>
                   <span className="block truncate text-[12px] text-muted">{[t.sub, t.location, !on && t.note ? NOTE[t.note] : null].filter(Boolean).join(" · ")}</span>
+                  {t.records?.map((r) => <span key={`${r.entity}${r.id}`} data-testid="action-record" className={cx("block text-[13px] leading-snug", on ? "text-text" : "text-muted line-through")}>• {r.label}</span>)}
                 </span>
               </>
             );
@@ -128,7 +151,7 @@ export function ActionCard({ p }: { p: ActionProposal }) {
         {!resume && <Button size="sm" variant="secondary" data-testid="action-show" aria-expanded={show} onClick={() => { setShow(!show); setEdit(false); }}>{show && !edit ? "הסתרת הצמחים" : "הצגת הצמחים"}</Button>}
         {!resume && <Button size="sm" variant="secondary" data-testid="action-edit" aria-pressed={edit} onClick={() => setEdit(!edit)}>{edit ? "סיום עריכה" : "עריכת הרשימה"}</Button>}
         <Button size="md" icon="check" className="col-span-2" data-testid="action-confirm" disabled={!n || busy !== null} loading={busy === "save"} onClick={() => void save()}>
-          {resume ? "להמשיך בשמירה" : "אישור ושמירה"}
+          {resume ? "להמשיך בשמירה" : DESTRUCTIVE.includes(p.action) ? "אישור ומחיקה" : "אישור ושמירה"}
         </Button>
         {!resume && <Button size="sm" variant="text" className="col-span-2" data-testid="action-cancel" disabled={busy !== null} onClick={() => void cancel()}>ביטול</Button>}
       </div>

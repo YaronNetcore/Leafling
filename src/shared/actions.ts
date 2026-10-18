@@ -7,11 +7,37 @@ import type { DatePrecision, HealthCase, Location, Plant, PlantEvent, Reminder, 
 // - Which plants, which date and what is safe are decided HERE, deterministically, against the user's own records.
 // - Nothing is written until the user confirms the proposal card (Worker: actions.ts).
 
-export type ActionKind = "water" | "fertilize" | "soil_check" | "treatment" | "move" | "reminder" | "note";
-export const ACTION_KINDS: ActionKind[] = ["water", "fertilize", "soil_check", "treatment", "move", "reminder", "note"];
+export type CreateKind = "water" | "fertilize" | "soil_check" | "treatment" | "move" | "reminder" | "note";
+/** Changes to EXISTING records (2026-10): each one previews the actual records and runs only after confirmation. */
+export type RecordKind = "resolve_issue" | "remove_issue" | "delete_records" | "redate_records" | "edit_records" | "cancel_reminders" | "redate_reminders" | "undo";
+export type ActionKind = CreateKind | RecordKind;
+export const CREATE_KINDS: CreateKind[] = ["water", "fertilize", "soil_check", "treatment", "move", "reminder", "note"];
+export const RECORD_KINDS: RecordKind[] = ["resolve_issue", "remove_issue", "delete_records", "redate_records", "edit_records", "cancel_reminders", "redate_reminders", "undo"];
+export const ACTION_KINDS: ActionKind[] = [...CREATE_KINDS, ...RECORD_KINDS];
+export const isRecordKind = (a: ActionKind): a is RecordKind => (RECORD_KINDS as string[]).includes(a);
 export const ACTION_LABEL: Record<ActionKind, string> = {
   water: "השקיה", fertilize: "דישון", soil_check: "בדיקת אדמה", treatment: "טיפול", move: "העברת מיקום", reminder: "תזכורת", note: "הערה",
+  resolve_issue: "סימון החלמה", remove_issue: "מחיקת רישום בעיה שגוי", delete_records: "מחיקת רישומים", redate_records: "תיקון תאריך",
+  edit_records: "תיקון רישום", cancel_reminders: "ביטול תזכורות", redate_reminders: "שינוי מועד תזכורת", undo: "ביטול פעולה קודמת",
 };
+/** Destructive kinds get a clear warning in the card (they are still recoverable: soft delete + undo). */
+export const DESTRUCTIVE: ActionKind[] = ["remove_issue", "delete_records"];
+
+/**
+ * One existing record a record-action touches (shown in the card, executed only if its plant stays selected).
+ * Every change is "set these fields, but only if the record still has the `expect` values" — so a record edited
+ * in the meantime is reported, never overwritten. "$now" in `set` is the execution time.
+ */
+export interface RecordRef {
+  entity: "event" | "health" | "reminder" | "plant";
+  id: string;
+  label: string;
+  op: "resolve" | "soft_delete" | "unlink_pest" | "redate" | "edit" | "cancel" | "reschedule" | "restore";
+  set: Record<string, unknown>;
+  expect: Record<string, unknown>;
+}
+/** What one executed card changed — the basis of undo (server-side, per record, never the chat text). */
+export interface Applied { entity: RecordRef["entity"]; id: string; plantId: string; label: string; created?: boolean; before?: Record<string, unknown>; after?: Record<string, unknown> }
 export type SoilState = "dry" | "slightly_moist" | "very_moist";
 export const SOIL_LABEL: Record<SoilState, string> = { dry: "יבשה", slightly_moist: "לחה", very_moist: "לחה מאוד" };
 
@@ -24,6 +50,8 @@ export interface ProposalTarget {
   /** Pre-selected for saving. Unselected = shown but left out (user exclusion, or already recorded that day). */
   selected: boolean;
   note?: "already_recorded" | "already_there" | "excluded";
+  /** Record actions: the plant's existing records that will change. */
+  records?: RecordRef[];
 }
 
 export type ProposalStatus = "pending" | "executing" | "done" | "partial" | "cancelled" | "superseded";
@@ -52,6 +80,17 @@ export interface ActionProposal {
     reminderText?: string;
     reminderKind?: "inspect" | "custom";
     note?: string;
+    // Record actions
+    /** What is matched, in words ("רישומי אקריות", "השקיות מהיום"). */
+    recordsLabel?: string;
+    newDay?: string;
+    newDateLabel?: string;
+    newProduct?: string | null;
+    newPest?: string | null;
+    /** remove_issue: the treatments themselves stay (only their link to the wrong diagnosis is removed). */
+    keepTreatments?: boolean;
+    undoOf?: string;
+    undoTitle?: string;
   };
   warnings: string[];
   /** Offered follow-up: always an INSPECTION reminder — never a repeat pesticide application. */
@@ -64,6 +103,13 @@ export interface ActionProposal {
   results?: Record<string, "saved" | "skipped" | "failed">;
   failures?: { plantId: string; name: string; reason: string }[];
   finishedAt?: string;
+  /** Record changes committed by this card (append-only while executing) — undo uses it. */
+  applied?: Applied[];
+  /** Record actions: how many of the confirmed records were processed, and each one's outcome. */
+  opsDone?: number;
+  opResults?: string[];
+  /** Set on a card that was later undone (id of the undo card). */
+  undoneBy?: string | null;
 }
 
 // ---------------------------------------------------------------- time zones & dates
@@ -329,8 +375,24 @@ export function treatmentSafety(opts: { product?: string | null; pest?: string |
 
 // ---------------------------------------------------------------- summary text (Hebrew, deterministic)
 
+export const recordCount = (p: Pick<ActionProposal, "targets">) => p.targets.filter((t) => t.selected).reduce((n, t) => n + (t.records?.length ?? 0), 0);
+
 export function proposalQuestion(p: Pick<ActionProposal, "action" | "targets" | "scopeLabel" | "dateLabel" | "details">): string {
   const n = p.targets.filter((t) => t.selected).length;
+  if (isRecordKind(p.action)) {
+    if (!n) return "לא נשארו צמחים ברשימה. אפשר לבטל.";
+    const r = recordCount(p);
+    const d = p.details;
+    const q = p.action === "resolve_issue" ? `לסמן ש${n === 1 ? "הצמח החלים" : "הצמחים החלימו"}? הרישום יישאר בהיסטוריה.`
+      : p.action === "remove_issue" ? `למחוק את ${r === 1 ? "הרישום" : `${r} הרישומים`} כי ${r === 1 ? "הוא היה שגוי" : "הם היו שגויים"}?${d.keepTreatments ? " הטיפולים עצמם יישארו." : ""}`
+      : p.action === "delete_records" ? `למחוק ${r === 1 ? "את הרישום" : `${r} רישומים`}?`
+      : p.action === "redate_records" ? `להעביר ${r === 1 ? "את הרישום" : `${r} רישומים`} ל${d.newDateLabel?.split(" · ")[1] ?? d.newDay}?`
+      : p.action === "edit_records" ? `לעדכן ${r === 1 ? "את הרישום" : `${r} רישומים`}${d.newProduct ? ` — חומר: ${d.newProduct}` : ""}${d.newPest ? ` — בעיה: ${d.newPest}` : ""}?`
+      : p.action === "cancel_reminders" ? `לבטל ${r === 1 ? "את התזכורת" : `${r} תזכורות`}?`
+      : p.action === "redate_reminders" ? `להעביר ${r === 1 ? "את התזכורת" : `${r} תזכורות`} ל${d.newDateLabel?.split(" · ")[1] ?? d.newDay}?`
+      : `לבטל את "${d.undoTitle ?? ""}"${n > 1 ? ` ב־${n} צמחים` : ""}?`;
+    return `${p.scopeLabel}. ${q}`;
+  }
   const what = p.action === "water" ? "השקיה" : p.action === "fertilize" ? "דישון" : p.action === "soil_check" ? `בדיקת אדמה (${SOIL_LABEL[p.details.soil ?? "slightly_moist"]})`
     : p.action === "treatment" ? `טיפול${p.details.product ? ` ב${p.details.product}` : ""}${p.details.pest ? ` נגד ${p.details.pest}` : ""}`
     : p.action === "move" ? `העברה ל${p.details.toLocationName ?? ""}` : p.action === "reminder" ? `תזכורת: ${p.details.reminderText ?? ""}` : "הערה";
@@ -344,8 +406,8 @@ export function proposalQuestion(p: Pick<ActionProposal, "action" | "targets" | 
 
 const EVENT_TYPE: Partial<Record<ActionProposal["action"], string>> = { water: "watering", fertilize: "fertilizing", soil_check: "soil_check", treatment: "treatment_started", move: "location_changed", note: "note" };
 
-export const actionTitle = (p: ActionProposal) =>
-  p.action === "treatment" ? (p.details.pest ? `טיפול נגד ${p.details.pest}` : "טיפול") : p.action === "move" ? `העברה ל${p.details.toLocationName ?? ""}` : p.action === "reminder" ? `תזכורת: ${p.details.reminderText ?? ""}` : ACTION_LABEL[p.action];
+export const actionTitle = (p: ActionProposal): string =>
+  p.action === "undo" ? `ביטול: ${p.details.undoTitle ?? ""}` : isRecordKind(p.action) ? `${ACTION_LABEL[p.action]}${p.details.recordsLabel ? ` · ${p.details.recordsLabel}` : ""}` : p.action === "treatment" ? (p.details.pest ? `טיפול נגד ${p.details.pest}` : "טיפול") : p.action === "move" ? `העברה ל${p.details.toLocationName ?? ""}` : p.action === "reminder" ? `תזכורת: ${p.details.reminderText ?? ""}` : ACTION_LABEL[p.action];
 
 export interface Affected { plant: Plant | undefined; plantId: string; name: string; event?: PlantEvent; issue?: HealthCase; reminder?: Reminder; result: string }
 
@@ -360,5 +422,23 @@ export function affectedPlants(p: ActionProposal, plants: Plant[], events: Plant
     const plant = plants.find((x) => x.id === id);
     return { plant, plantId: id, name: plant ? displayName(plant) : p.targets.find((t) => t.plantId === id)?.name ?? "", event, issue, reminder, result: p.results?.[id] ?? "pending" };
   });
+}
+
+
+// ---------------------------------------------------------------- undo: what a card changed
+
+/** Records a card changed. Cards saved before the change log existed: rebuilt from their deterministic record ids. */
+export async function appliedOf(card: ActionProposal, existing: (ids: string[]) => Promise<Set<string>>, rid: (...parts: string[]) => Promise<string>): Promise<{ applied: Applied[]; notUndoable: string[] }> {
+  if (card.applied?.length) return { applied: card.applied, notUndoable: [] };
+  const saved = Object.entries(card.results ?? {}).filter(([, r]) => r === "saved").map(([id]) => id);
+  const kinds: Record<string, [Applied["entity"], string, string][]> = {
+    water: [["event", "e", "השקיה"]], fertilize: [["event", "e", "דישון"]], soil_check: [["event", "e", "בדיקת אדמה"]], note: [["event", "e", "הערה"]],
+    reminder: [["reminder", "r", "תזכורת"]], move: [["event", "e", "שינוי מיקום"]],
+    treatment: [["event", "e", "טיפול"], ["health", "hc", "בעיה"], ["event", "dx", "דיווח על בעיה"], ["reminder", "fu", "תזכורת לבדיקה"]],
+  };
+  const cand: Applied[] = [];
+  for (const pid of saved) for (const [entity, n, label] of kinds[card.action] ?? []) cand.push({ entity, id: await rid(card.id, pid, n), plantId: pid, label, created: true });
+  const have = await existing(cand.map((c) => `${c.entity}|${c.id}`));
+  return { applied: cand.filter((c) => have.has(`${c.entity}|${c.id}`)), notUndoable: card.action === "move" ? ["המיקום הקודם של הצמחים לא נשמר בכרטיס הזה — את ההעברה עצמה צריך לתקן ידנית."] : [] };
 }
 

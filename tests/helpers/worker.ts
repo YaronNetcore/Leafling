@@ -130,7 +130,8 @@ export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstReq
         if (schema?.properties?.intent) {
           const prompt = JSON.stringify(reqBody.messages);
           const given = typeof h.actionParse === "function" ? h.actionParse(prompt) : h.actionParse ?? { intent: "chat" };
-          const parsed = { intent: "new_action", action: "none", scope: "none", plants: [], exclude: [], include: [], status_filter: "none", location_text: null, location_key: null, date_text: null, soil: "none", pest: null, product: null, already_done: true, move_to_text: null, move_to_key: null, reminder_text: null, reminder_due_text: null, note_text: null, ...given };
+          const parsed = { intent: "new_action", action: "none", scope: "none", plants: [], exclude: [], include: [], status_filter: "none", location_text: null, location_key: null, date_text: null, soil: "none", pest: null, product: null, already_done: true, move_to_text: null, move_to_key: null, reminder_text: null, reminder_due_text: null, note_text: null,
+            record_kind: "none", record_date_text: null, which: "all", new_date_text: null, new_product: null, new_pest: null, removal_meaning: "none", keep_treatment: true, match_text: null, ...given };
           return new Response(JSON.stringify({
             id: "msg_parse", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,
             content: [{ type: "text", text: JSON.stringify(parsed) }], usage: { input_tokens: 400, output_tokens: 60 },

@@ -135,6 +135,12 @@ Incident 2026-10-18 07:01 UTC — blank app (cream background only) after deploy
 - Blank-screen protection: boot screen from the first frame (+ refresh after 12 s), `/api/v1/me` timeout 8 s → this device's offline copy, 30 s header timeout on all API calls, error boundary per screen with a Hebrew retry/refresh screen (chunk errors reload once, dropping cached code only), `public/boot-fallback.js` (no app code needed) shows "Leafling לא נטענה" + refresh if the app's script never starts.
 - `tests/e2e/smoke.e2e.ts`: production build with a real-shaped account (structure of the owner's data) → every main screen must show content (fails on page errors / empty root), also after reload, after the reminders' due date, with a hanging API, API 500s and a failed script.
 
+AI Botanist edits, deletes and undo (2026-10-18) — details `docs/AI_ACTIONS.md` § Changing existing records:
+- From the chat, after a card + confirmation: mark an issue resolved; remove a wrong issue (treatment kept, only its pest link removed); delete treatments / waterings / notes; correct event dates ("השקיתי אתמול ולא היום"); correct product or pest; cancel or move reminders; undo the last action (chat or "ביטול הפעולה" on the card) and undo the undo.
+- Deterministic record matching per plant, guarded updates (no overwrite of records changed since), soft delete with audit fields, change log per card, idempotent chunks, per-plant results. No schema change.
+- Production (read-only, earlier today): of the 26 plants in the 13.10 treatment, 5 are seedlings, 2 cuttings, 19 plants — "תורידי את האקריות מהשתילים" will show only those 5. Nothing was changed by this deploy.
+- Tests: 154 unit/integration/isolation + 73 browser + 5 harness, all passing.
+
 Not done / known issues:
 - Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
 - Catalog content is an unverified editorial draft (no primary-source check yet); no licensed plant photos added yet.

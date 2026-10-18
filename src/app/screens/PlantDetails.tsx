@@ -473,6 +473,8 @@ export default function PlantDetails() {
   const [edit, setEdit] = useState<Partial<Plant>>({});
   const [rem, setRem] = useState({ kind: "rotate" as const as "rotate" | "support" | "inspect" | "custom", text: "לסובב את העציץ", every: 14 });
 
+  const tabParam = params.get("tab");
+  useEffect(() => { if (tabParam && TABS.some((t) => t.id === tabParam)) setTab(tabParam as Tab); }, [tabParam, id]);
   useEffect(() => { if (params.get("photo") === "1") { setSheet("photo-source"); params.delete("photo"); setParams(params, { replace: true }); } }, [params, setParams]);
   const journalPhotos = useMemo(() => photos.filter((x) => x.inJournal), [photos]);
 

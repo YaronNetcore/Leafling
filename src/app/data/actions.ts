@@ -32,3 +32,13 @@ export async function cancelProposal(p: ActionProposal): Promise<void> {
   if (!res.ok) throw new Error(((await res.json().catch(() => ({}))) as { error?: string }).error ?? `http_${res.status}`);
   void sync();
 }
+
+/** Asks the server for an UNDO card of a committed card (it appears in the same chat; nothing changes before confirming). */
+export async function requestUndo(p: ActionProposal): Promise<string> {
+  const res = await api("/api/v1/actions/undo", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ messageId: p.id, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }) });
+  const j = (await res.json().catch(() => ({}))) as { messageId?: string; error?: string };
+  if (!res.ok) throw new Error(j.error ?? `http_${res.status}`);
+  void sync();
+  setTimeout(() => void sync(), 1200);
+  return j.messageId!;
+}

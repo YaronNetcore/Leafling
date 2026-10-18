@@ -1,6 +1,6 @@
 import { useLiveQuery } from "dexie-react-hooks";
 import { useNavigate, useParams } from "react-router-dom";
-import { actionTitle, affectedPlants } from "../../shared/actions.ts";
+import { actionTitle, affectedPlants, isRecordKind } from "../../shared/actions.ts";
 import { isOpenCase } from "../../shared/domain.ts";
 import type { ChatMessage, Plant } from "../../shared/types.ts";
 import { db } from "../data/db.ts";
@@ -37,7 +37,8 @@ export function ActionUpdates() {
   const p = data.m.proposal;
   const rows = data.rows!;
   const saved = rows.filter((r) => r.result === "saved");
-  const stored = saved.filter((r) => (r.event || (p.action === "reminder" && r.reminder)));
+  const rec = isRecordKind(p.action);
+  const stored = rec ? saved : saved.filter((r) => (r.event || (p.action === "reminder" && r.reminder)));
   return (
     <div className="safe-top px-4 pb-10">
       <div className="flex items-center gap-2 py-2"><BackButton /><h1 className="text-[22px] font-bold text-ink">{actionTitle(p)}</h1></div>
@@ -55,13 +56,15 @@ export function ActionUpdates() {
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-[16px] font-bold text-ink">{r.name}</span>
                 <span className="mt-0.5 flex flex-wrap gap-1.5 text-[12px]">
-                  {r.result === "saved" && (r.event || r.reminder) && <span className="rounded-full bg-sage px-2 py-0.5 font-semibold text-green">✓ נשמר {r.event ? new Date(r.event.occurredAt).toLocaleDateString("he-IL") : ""}</span>}
-                  {r.result === "saved" && !(r.event || r.reminder) && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">ממתין לסנכרון</span>}
+                  {rec && r.result === "saved" && <span className="rounded-full bg-sage px-2 py-0.5 font-semibold text-green">✓ בוצע</span>}
+                  {!rec && r.result === "saved" && (r.event || r.reminder) && <span className="rounded-full bg-sage px-2 py-0.5 font-semibold text-green">✓ נשמר {r.event ? new Date(r.event.occurredAt).toLocaleDateString("he-IL") : ""}</span>}
+                  {!rec && r.result === "saved" && !(r.event || r.reminder) && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">ממתין לסנכרון</span>}
                   {r.result === "failed" && <span className="rounded-full bg-sun-bg px-2 py-0.5 text-ink">לא נשמר</span>}
                   {r.result === "skipped" && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">דולג</span>}
                   {r.issue && <span className={cx("rounded-full px-2 py-0.5", isOpenCase(r.issue) ? "bg-sun-bg text-ink" : "bg-surface-2 text-muted")}>{isOpenCase(r.issue) ? `בעיה פעילה: ${r.issue.title}` : "הבעיה סומנה כפתורה"}</span>}
-                  {r.reminder && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">{r.reminder.active ? `תזכורת ${new Date(r.reminder.nextAt).toLocaleDateString("he-IL")}` : "תזכורת בוצעה"}</span>}
+                  {!rec && r.reminder && <span className="rounded-full bg-surface-2 px-2 py-0.5 text-muted">{r.reminder.active ? `תזכורת ${new Date(r.reminder.nextAt).toLocaleDateString("he-IL")}` : "תזכורת בוצעה"}</span>}
                 </span>
+                {rec && p.targets.find((t) => t.plantId === r.plantId)?.records?.map((x) => <span key={x.id} className="mt-0.5 block text-[12px] text-muted">• {x.label}</span>)}
               </span>
               <Icon name="back" size={18} className="text-muted" />
             </button>

@@ -4,13 +4,17 @@ import type { Status } from "../shared/types.ts";
 // Structured output of the action parser (Claude) and its strict validation. No Worker APIs here (unit-testable).
 
 const MAX_PLANTS_LISTED = 300;
+export const RECORD_TYPES = ["health_issue", "treatment", "watering", "fertilizing", "soil_check", "note", "reminder", "none"] as const;
+export type RecordType = typeof RECORD_TYPES[number];
+
 const KEYS = { type: "array", items: { type: "string" } } as const;
 const REF = { type: "object", additionalProperties: false, required: ["text", "keys", "all_matching"], properties: { text: { type: "string" }, keys: KEYS, all_matching: { type: "boolean" } } } as const;
 const STR_OR_NULL = { type: ["string", "null"] } as const;
 export const PARSE_SCHEMA = {
   type: "object",
   additionalProperties: false,
-  required: ["intent", "action", "scope", "plants", "exclude", "include", "status_filter", "location_text", "location_key", "date_text", "soil", "pest", "product", "already_done", "move_to_text", "move_to_key", "reminder_text", "reminder_due_text", "note_text"],
+  required: ["intent", "action", "scope", "plants", "exclude", "include", "status_filter", "location_text", "location_key", "date_text", "soil", "pest", "product", "already_done", "move_to_text", "move_to_key", "reminder_text", "reminder_due_text", "note_text",
+    "record_kind", "record_date_text", "which", "new_date_text", "new_product", "new_pest", "removal_meaning", "keep_treatment", "match_text"],
   properties: {
     intent: { type: "string", enum: ["new_action", "modify_pending", "confirm_pending", "cancel_pending", "chat"] },
     action: { type: "string", enum: [...ACTION_KINDS, "none"] },
@@ -25,6 +29,14 @@ export const PARSE_SCHEMA = {
     pest: STR_OR_NULL, product: STR_OR_NULL, already_done: { type: "boolean" },
     move_to_text: STR_OR_NULL, move_to_key: STR_OR_NULL,
     reminder_text: STR_OR_NULL, reminder_due_text: STR_OR_NULL, note_text: STR_OR_NULL,
+    // Changes to existing records
+    record_kind: { type: "string", enum: [...RECORD_TYPES] },
+    record_date_text: STR_OR_NULL,
+    which: { type: "string", enum: ["all", "last"] },
+    new_date_text: STR_OR_NULL, new_product: STR_OR_NULL, new_pest: STR_OR_NULL,
+    removal_meaning: { type: "string", enum: ["resolved", "erroneous", "unclear", "none"] },
+    keep_treatment: { type: "boolean" },
+    match_text: STR_OR_NULL,
   },
 } as const;
 
@@ -41,6 +53,9 @@ export interface Parsed {
   pest: string | null; product: string | null; already_done: boolean;
   move_to_text: string | null; move_to_key: string | null;
   reminder_text: string | null; reminder_due_text: string | null; note_text: string | null;
+  record_kind: RecordType; record_date_text: string | null; which: "all" | "last";
+  new_date_text: string | null; new_product: string | null; new_pest: string | null;
+  removal_meaning: "resolved" | "erroneous" | "unclear" | "none"; keep_treatment: boolean; match_text: string | null;
 }
 
 const str = (v: unknown, max = 120) => (typeof v === "string" && v.trim() ? v.trim().slice(0, max) : null);
@@ -66,6 +81,10 @@ export function sanitizeParsed(raw: unknown): Parsed {
     pest: str(o.pest, 60), product: str(o.product, 60), already_done: o.already_done !== false,
     move_to_text: str(o.move_to_text, 60), move_to_key: typeof o.move_to_key === "string" && /^l\d{1,4}$/.test(o.move_to_key) ? o.move_to_key : null,
     reminder_text: str(o.reminder_text, 140), reminder_due_text: str(o.reminder_due_text, 60), note_text: str(o.note_text, 500),
+    record_kind: oneOf(o.record_kind, RECORD_TYPES, "none"), record_date_text: str(o.record_date_text, 60), which: oneOf(o.which, ["all", "last"] as const, "all"),
+    new_date_text: str(o.new_date_text, 60), new_product: str(o.new_product, 60), new_pest: str(o.new_pest, 60),
+    removal_meaning: oneOf(o.removal_meaning, ["resolved", "erroneous", "unclear", "none"] as const, "none"),
+    keep_treatment: o.keep_treatment !== false, match_text: str(o.match_text, 80),
   };
 }
 
