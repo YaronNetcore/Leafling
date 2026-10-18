@@ -121,6 +121,7 @@ AI Botanist actions (2026-10-18) — natural-language plant updates from the cha
 - Claude only parses the sentence (allowlisted structured output, short keys of the user's own plants); targets, Hebrew dates (user time zone, weekday check), duplicates and safety are deterministic server code. Card stored in the server-only message record; execution in atomic idempotent chunks with per-plant results; success message written with the last records.
 - Same records as manual actions (events, health cases reused per pest, inspection reminders → Today, moves). Safety: no repeat-pesticide scheduling, Confidor/imidacloprid vs spider-mite warning, bees, pets, label-only dosing.
 - No schema change (no migration). New endpoints `/api/v1/actions/execute`, `/api/v1/actions/cancel`.
+- Deployed: `46c9c7b` → Worker version `03bcabc4`, ACTIVE at 100% (2026-10-18 05:59 UTC); verify:live all checks pass (secret, bindings, schema v3, owner data intact). This docs commit gets its own build.
 - Tests: 131 unit/integration/isolation (32 new) + 62 browser (3 new) + 5 harness, all passing (mocked model; Chromium at iPhone size, not a real iPhone).
 
 Not done / known issues:
