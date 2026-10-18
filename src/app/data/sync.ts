@@ -24,10 +24,19 @@ export class UserChanged extends Error {}
  * Access session now belongs to someone else). We then stop immediately — nothing of this user is
  * sent — and restart at "/", which re-boots with the new identity and that user's own local database.
  */
+const API_HEADER_TIMEOUT_MS = 30_000;
 export async function api(path: string, init: RequestInit = {}): Promise<Response> {
   const headers = new Headers(init.headers);
   if (currentUserId) headers.set("x-leafling-user", currentUserId);
-  const res = await fetch(path, { ...init, headers, redirect: "manual", credentials: "same-origin", cache: "no-store" });
+  // A request whose response does not even START within 30 s is abandoned (a stuck server must not lock the sync
+  // loop forever); streaming bodies (chat) may run longer once the headers arrived.
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), API_HEADER_TIMEOUT_MS);
+  init.signal?.addEventListener("abort", () => ac.abort());
+  if (init.signal?.aborted) ac.abort();
+  let res: Response;
+  try { res = await fetch(path, { ...init, headers, signal: ac.signal, redirect: "manual", credentials: "same-origin", cache: "no-store" }); }
+  finally { clearTimeout(timer); }
   if (res.type === "opaqueredirect" || res.status === 0 || res.status === 401) {
     emit({ status: "needs-login" });
     throw new AuthRequired();

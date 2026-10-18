@@ -129,8 +129,14 @@ export async function migrate(db: D1Database): Promise<void> {
   await migrateV3(db);
 }
 
-let ready: Promise<void> | null = null;
-export function ensureAppSchema(db: D1Database): Promise<void> {
-  if (!ready) ready = migrate(db).catch((e) => { ready = null; throw e; });
-  return ready;
+// Only the RESULT is shared between requests, never an in-flight promise: a promise created by one request is
+// tied to that request's I/O, and if that request is cancelled (e.g. the phone reloads right after a new
+// version's service worker activates) the promise never settles — every later request awaiting it hangs.
+// That is what blanked the app on 2026-10-18 (version 3d646a47: requests waited up to 229 s with ~0 CPU).
+// migrate() is idempotent and safe to run concurrently (two cheap reads once the schema is current).
+let schemaReady = false;
+export async function ensureAppSchema(db: D1Database): Promise<void> {
+  if (schemaReady) return;
+  await migrate(db);
+  schemaReady = true;
 }

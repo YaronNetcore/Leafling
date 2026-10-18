@@ -5,12 +5,18 @@ import App from "./App.tsx";
 import { bootIdentity } from "./data/identity.ts";
 import { uploadPending } from "./data/media.ts";
 import { onSync, startSyncLoop } from "./data/sync.ts";
+import { BootScreen, ErrorBoundary, ErrorScreen } from "./ui/Recovery.tsx";
 import { Button, ToastProvider, Wordmark } from "./ui/ui.tsx";
 import "./styles.css";
 
 // Identity first: the server says who is signed in; only then is that user's own local database opened.
 const root = createRoot(document.getElementById("root")!);
+(window as unknown as { __leaflingMounted?: boolean }).__leaflingMounted = true;
+// Something is visible from the first frame; if starting takes long, say so (with a refresh button).
+root.render(<BootScreen />);
+const slow = setTimeout(() => root.render(<BootScreen slow />), 12_000);
 void bootIdentity().then((boot) => {
+  clearTimeout(slow);
   if (boot.kind === "signin") {
     root.render(
       <main className="safe-top flex min-h-dvh flex-col items-center justify-center gap-5 px-6 text-center">
@@ -23,15 +29,20 @@ void bootIdentity().then((boot) => {
   }
   root.render(
     <StrictMode>
-      <BrowserRouter>
-        <ToastProvider>
-          <App />
-        </ToastProvider>
-      </BrowserRouter>
+      <ErrorBoundary>
+        <BrowserRouter>
+          <ToastProvider>
+            <App />
+          </ToastProvider>
+        </BrowserRouter>
+      </ErrorBoundary>
     </StrictMode>,
   );
   startSyncLoop();
   onSync((s) => { if (s.status === "idle") void uploadPending(); });
+}).catch(() => {
+  clearTimeout(slow);
+  root.render(<ErrorScreen title="לא הצלחנו לפתוח את Leafling" onRetry={() => location.reload()} />);
 });
 
 // The service worker is versioned per build; a new version takes over on the next launch

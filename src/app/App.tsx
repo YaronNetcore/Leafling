@@ -18,6 +18,7 @@ import Settings, { applyTheme } from "./screens/Settings.tsx";
 import Today from "./screens/Today.tsx";
 import Tools, { ToolPage } from "./screens/Tools.tsx";
 import Welcome from "./screens/Welcome.tsx";
+import { BootScreen, ErrorBoundary } from "./ui/Recovery.tsx";
 import { MainLayout } from "./ui/Shell.tsx";
 
 /** True once this device's copy has been pulled at least once (or syncing is impossible right now). */
@@ -31,9 +32,9 @@ function useFirstSyncSettled(): boolean {
 function Home() {
   const profile = useProfile();
   const settled = useFirstSyncSettled();
-  if (profile === undefined) return null;
+  if (profile === undefined) return <BootScreen />;
   // An existing user on a new device: wait for the first pull before deciding it is a brand-new user.
-  if (!profile && !settled) return null;
+  if (!profile && !settled) return <BootScreen />;
   if (!profile || (!profile.onboardingDone && !profile.welcomeSeen)) return <Navigate to="/welcome" replace />;
   if (!profile.onboardingDone) return <Navigate to={`/onboarding/${profile.onboardingStep || 1}`} replace />;
   return <Navigate to="/today" replace />;
@@ -47,6 +48,7 @@ function ScrollTop() {
 
 export default function App() {
   const profile = useProfile();
+  const { pathname } = useLocation();
   useEffect(() => {
     applyTheme(profile?.theme ?? "system");
     const mq = matchMedia("(prefers-color-scheme: dark)");
@@ -57,6 +59,7 @@ export default function App() {
   return (
     <>
       <ScrollTop />
+      <ErrorBoundary key={pathname}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/welcome" element={<Welcome />} />
@@ -84,6 +87,7 @@ export default function App() {
         </Route>
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
+      </ErrorBoundary>
     </>
   );
 }

@@ -17,12 +17,17 @@ const store = {
   clear: () => { try { localStorage.removeItem(LAST_USER); } catch { /* ignore */ } },
 };
 
+const ME_TIMEOUT_MS = 8_000;
+
 export let me: { userId: string; email?: string } | null = null;
 
 export async function bootIdentity(): Promise<Boot> {
   let server: { userId: string; email: string; isLegacyOwner: boolean } | null = null;
   try {
-    const res = await fetch("/api/v1/me", { redirect: "manual", credentials: "same-origin", cache: "no-store" });
+    // Never wait forever: a slow or stuck server must not keep the app from opening (offline copy below).
+    const ac = new AbortController();
+    const timer = setTimeout(() => ac.abort(), ME_TIMEOUT_MS);
+    const res = await fetch("/api/v1/me", { redirect: "manual", credentials: "same-origin", cache: "no-store", signal: ac.signal }).finally(() => clearTimeout(timer));
     if (res.ok && res.type !== "opaqueredirect") server = await res.json();
   } catch { /* offline */ }
 
