@@ -111,7 +111,7 @@ async function run(p: Pending, prepMs: number) {
   try {
     const res = await api("/api/v1/chat", {
       method: "POST", signal: ac.signal, headers: { "content-type": "application/json" },
-      body: JSON.stringify({ chatId: p.chatId, messageId: p.messageId, plantId: p.plantId, text: p.text, images: p.images }),
+      body: JSON.stringify({ chatId: p.chatId, messageId: p.messageId, plantId: p.plantId, text: p.text, images: p.images, tz: Intl.DateTimeFormat().resolvedOptions().timeZone }),
     });
     timing.firstByteMs = Math.round(performance.now() - t0);
     if (!res.ok || !res.body) {

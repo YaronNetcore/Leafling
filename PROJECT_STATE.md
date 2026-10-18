@@ -116,6 +116,13 @@ Update 2026-10-04 (owner corrections from real iPhone testing) — implemented, 
 - Tests: 99 unit/integration/isolation + 59 browser tests, all passing.
 - Deployed: `aad09f3` → Worker version `80ba93c0`, ACTIVE at 100% (2026-10-04). Schema v3 applied in production. Real chat timings: first text 0.84–1.08 s (was 17 s before streaming); identify 11.6–18.5 s (was 20–29 s) — `docs/perf/AI_PERFORMANCE_2026-10.md`.
 
+AI Botanist actions (2026-10-18) — natural-language plant updates from the chat (details: `docs/AI_ACTIONS.md`):
+- "השקיתי את כל הצמחים במרפסת", "דישנתי את המונסטרה והפוטוס אתמול", "טיפלתי בכל הצמחים נגד אקריות עם קונפידור ב־13.10.26", "העברתי את מוצי לסלון", "תזכירי לי לבדוק את השורשים של כל הייחורים בעוד שבוע", "כל הצמחים במרפסת נבדקו היום והאדמה עדיין לחה" → confirmation card in the chat (count, action, date, product/pest, warnings, show/edit list, אישור ושמירה / ביטול); corrections in the chat ("לא לפוטוס" → "נשארו 2"); nothing written before confirmation.
+- Claude only parses the sentence (allowlisted structured output, short keys of the user's own plants); targets, Hebrew dates (user time zone, weekday check), duplicates and safety are deterministic server code. Card stored in the server-only message record; execution in atomic idempotent chunks with per-plant results; success message written with the last records.
+- Same records as manual actions (events, health cases reused per pest, inspection reminders → Today, moves). Safety: no repeat-pesticide scheduling, Confidor/imidacloprid vs spider-mite warning, bees, pets, label-only dosing.
+- No schema change (no migration). New endpoints `/api/v1/actions/execute`, `/api/v1/actions/cancel`.
+- Tests: 131 unit/integration/isolation (32 new) + 62 browser (3 new) + 5 harness, all passing (mocked model; Chromium at iPhone size, not a real iPhone).
+
 Not done / known issues:
 - Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
 - Catalog content is an unverified editorial draft (no primary-source check yet); no licensed plant photos added yet.
@@ -124,6 +131,7 @@ Not done / known issues:
 - App data lives on the PREVIEW D1/R2 (no production resources yet — creating them needs owner approval).
 - Not built yet: push notifications, weather, original-photo ZIP export (feasibility pending), seedling split/thin and lineage UI, fertilizer library, external plant-name lookup, offline photo-upload retry UI. Illustrations/photos are crops of the supplied references (placeholders until final art). JS bundle ~172 KB gz (route splitting later).
 - Phase 0 iPhone tests (P0-1…P0-11) not yet run.
+- AI Botanist actions: real-model Hebrew parsing not yet exercised live (needs a signed-in chat); one action type per message.
 
 ## Deployment status (2026-10-02)
 - Every push to `claude/gifted-gates-l6yzsf` is built and deployed by Workers Builds (`leafling-preview`, root `spikes/phase0`, `npx wrangler deploy`). Commit → build → version mapping comes from the commit's GitHub check run.

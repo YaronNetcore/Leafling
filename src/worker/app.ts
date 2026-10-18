@@ -1,3 +1,4 @@
+import { cancelAction, executeAction } from "./actions.ts";
 import { aiRequest } from "./ai.ts";
 import { authenticate } from "./auth.ts";
 import { chatRequest, getChatAttachment, stopChat } from "./chat.ts";
@@ -46,6 +47,8 @@ export async function handleApp(req: Request, env: AppEnv, url: URL, ctx?: Execu
     else if (p === "/ai" && m === "POST") res = await aiRequest(req, env, user, started);
     else if (p === "/chat" && m === "POST") res = await chatRequest(req, env, user, ctx, started);
     else if (p === "/chat/stop" && m === "POST") res = await stopChat(req, env, user);
+    else if (p === "/actions/execute" && m === "POST") res = await executeAction(req, env, user.id);
+    else if (p === "/actions/cancel" && m === "POST") res = await cancelAction(req, env, user.id);
     else if ((mm = p.match(/^\/chat\/attachments\/([0-9a-f-]{36})\/([0-3])$/)) && m === "GET") res = await getChatAttachment(env, user, mm[1], Number(mm[2]));
     else throw new HttpError(404, "not_found");
     logEvent("request", { path: p.replace(/[0-9a-f-]{36}/g, ":id"), method: m, status: res.status, ms: Date.now() - started });

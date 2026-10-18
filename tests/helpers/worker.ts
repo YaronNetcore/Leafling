@@ -63,6 +63,8 @@ export interface Harness {
   chatReply?: { text: string; pieces?: number; firstMs?: number; gapMs?: number; stopReason?: string };
   /** Structured (non-streaming) mock: candidates returned for identify/diagnose. */
   aiCandidates?: { name_he: string; scientific: string; confidence: string; why: string }[];
+  /** Action-parser mock (AI Botanist actions): a partial parse result, or a function of the prompt the Worker sent. */
+  actionParse?: Record<string, unknown> | ((prompt: string) => Record<string, unknown>);
   /** Set when a streaming mock response was cancelled by the Worker (upstream abort). */
   anthropicAborted?: number;
   certFetches: number;
@@ -124,6 +126,16 @@ export async function startWorker(opts: { anthropicKey?: boolean; beforeFirstReq
         anthropic.push({ body: reqBody });
         if (h.anthropicStatus) return new Response(JSON.stringify({ type: "error", error: { type: "authentication_error", message: "invalid x-api-key" } }), { status: h.anthropicStatus, headers: { "content-type": "application/json" } });
         if (reqBody.stream) return streamReply(h);
+        const schema = (reqBody.output_config as { format?: { schema?: { properties?: Record<string, unknown> } } } | undefined)?.format?.schema;
+        if (schema?.properties?.intent) {
+          const prompt = JSON.stringify(reqBody.messages);
+          const given = typeof h.actionParse === "function" ? h.actionParse(prompt) : h.actionParse ?? { intent: "chat" };
+          const parsed = { intent: "new_action", action: "none", scope: "none", plants: [], exclude: [], include: [], status_filter: "none", location_text: null, location_key: null, date_text: null, soil: "none", pest: null, product: null, already_done: true, move_to_text: null, move_to_key: null, reminder_text: null, reminder_due_text: null, note_text: null, ...given };
+          return new Response(JSON.stringify({
+            id: "msg_parse", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,
+            content: [{ type: "text", text: JSON.stringify(parsed) }], usage: { input_tokens: 400, output_tokens: 60 },
+          }), { headers: { "content-type": "application/json" } });
+        }
         const result = { answer: "ok", observed: [], interpretation: [], missing: [], confidence: "possible", candidates: h.aiCandidates ?? [{ name_he: "פוטוס", scientific: "Epipremnum aureum", confidence: "likely", why: "test" }], urgency: "none", contagious_suspected: false, retake_request: null };
         return new Response(JSON.stringify({
           id: "msg_test", type: "message", role: "assistant", model: "claude-sonnet-5", stop_reason: "end_turn", stop_sequence: null,

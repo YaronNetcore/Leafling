@@ -288,7 +288,10 @@ function describe(e: PlantEvent, locName: (id: unknown) => string): string {
   if (e.type === "status_changed") return `${STATUS_LABEL[pl.from as Status] ?? "—"} ← ${STATUS_LABEL[pl.to as Status] ?? "—"}`;
   if (e.type === "pot_changed") return `${pl.from ?? "—"} ← ${pl.to ?? "—"} ס״מ`;
   if (e.type === "task_postponed") return `עד ${new Date(String(pl.until)).toLocaleDateString("he-IL")}`;
-  if (e.type === "diagnosis") return String(pl.title ?? "");
+  if (e.type === "diagnosis") return `${String(pl.title ?? "")}${pl.source === "user" ? " · דיווח שלך" : ""}`;
+  if (e.type === "treatment_started") return [pl.product ? String(pl.product) : String(pl.title ?? ""), pl.pest ? `נגד ${String(pl.pest)}` : "", pl.reportedBy === "user" ? "דיווח שלך" : ""].filter(Boolean).join(" · ");
+  if (e.type === "treatment_ended") return String(pl.title ?? "");
+  if (e.type === "fertilizing" || e.type === "watering") return pl.via === "ai_chat" ? "נרשם בצ'אט" : "";
   return "";
 }
 
@@ -319,7 +322,8 @@ function HistoryTab({ events }: { events: PlantEvent[] }) {
 }
 
 // ---------- Health ----------
-function HealthTab({ p, cases }: { p: Plant; cases: HealthCase[] }) {
+function HealthTab({ p, cases, events }: { p: Plant; cases: HealthCase[]; events: PlantEvent[] }) {
+  const treatments = (caseId: string) => events.filter((e) => e.type === "treatment_started" && e.payload.healthCaseId === caseId && !e.deletedAt).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   const nav = useNavigate();
   const toast = useToast();
   const [pro, setPro] = useState(false);
@@ -339,6 +343,11 @@ function HealthTab({ p, cases }: { p: Plant; cases: HealthCase[] }) {
           {c.likelyCause && <p className="mt-1 text-[15px] text-text">{c.likelyCause}</p>}
           {c.confidence && <div className="mt-2"><ConfidenceBadge value={c.confidence} /></div>}
           {c.notes && <p className="mt-2 whitespace-pre-wrap text-[14px] text-muted">{c.notes}</p>}
+          {treatments(c.id).length > 0 && (
+            <ul className="mt-2 space-y-1" data-testid="case-treatments">
+              {treatments(c.id).map((t) => <li key={t.id} className="flex items-center gap-2 text-[14px] text-ink"><Icon name="steth" size={15} className="text-green" />טיפול{t.payload.product ? ` ב${String(t.payload.product)}` : ""} · {t.precision === "unknown" ? "?" : new Date(t.occurredAt).toLocaleDateString("he-IL")}</li>)}
+            </ul>
+          )}
           <Button size="md" variant="secondary" icon="check" className="mt-3 w-full" onClick={async () => { if (confirm("לסיים את המעקב אחרי הבעיה הזו?")) { await resolveHealthCase(c); if (p.status === "sick") setAskStatus(true); toast("המעקב הסתיים 💚"); } }}>הצמח התאושש — לסיים מעקב</Button>
         </Card>
       ))}
@@ -488,7 +497,7 @@ export default function PlantDetails() {
           {tab === "care" && <CareTab p={p} events={events} onSoil={() => setSheet("soil")} onNote={() => { setNote({ text: "", milestone: "" }); setSheet("note"); }} onMove={() => setSheet("move")} onReminder={() => setSheet("reminder")} />}
           {tab === "journal" && <JournalTab p={p} events={events} photos={journalPhotos} onAdd={() => { setNote({ text: "", milestone: "" }); setSheet("note"); }} onOpenPhoto={setPhotoId} onCompare={() => setSheet("compare")} onTimelapse={() => setSheet("timelapse")} />}
           {tab === "history" && <HistoryTab events={events} />}
-          {tab === "health" && <HealthTab p={p} cases={cases} />}
+          {tab === "health" && <HealthTab p={p} cases={cases} events={events} />}
           {tab === "about" && (sp ? (
             <div>
               <TabRow tabs={[{ id: "propagation" as const, label: "ריבוי", icon: "sprout" as const }, { id: "safety" as const, label: "בטיחות", icon: "paw" as const }, { id: "problems" as const, label: "בעיות נפוצות", icon: "steth" as const }]} value={aboutTab} onChange={setAboutTab} />

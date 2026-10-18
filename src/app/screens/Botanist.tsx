@@ -7,6 +7,7 @@ import { attachmentUrl, discard, retry, sendMessage, settle, stop, useChatMessag
 import { MAX_IMAGES, checkFile } from "../data/images.ts";
 import { speciesOf, usePlant, usePlants } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
+import { ActionCard } from "../ui/ActionCard.tsx";
 import { PersonalPlantPicker } from "../ui/PersonalPlantPicker.tsx";
 import { IconButton, PlantImage, StatusBadge, cx, useToast } from "../ui/ui.tsx";
 
@@ -151,6 +152,7 @@ export function Botanist() {
         {stored.map((m) => m.role === "user" ? <UserMessage key={m.id} m={m} /> : (
           <div key={m.id} className="space-y-1">
             <Bubble role="assistant" testid="msg-assistant">{m.text}</Bubble>
+            {m.proposal && <ActionCard key={`${m.id}:${m.proposal.status}`} p={m.proposal} />}
             {m.status === "partial" && <p className="me-auto px-2 text-[13px] text-muted" data-testid="msg-partial">התשובה נעצרה באמצע.</p>}
           </div>
         ))}

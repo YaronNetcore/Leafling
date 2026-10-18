@@ -54,7 +54,8 @@ const trimText = (s: unknown, n: number) => (typeof s === "string" ? (s.length >
 function compactPayload(p: Record<string, unknown> | undefined): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(p ?? {})) {
-    if (k === "photoId" || k === "photoIds" || v == null || v === "") continue;
+    // Internal ids and bookkeeping are not useful to the model (treatment: product / pest / reportedBy stay).
+    if (k === "photoId" || k === "photoIds" || k === "healthCaseId" || k === "via" || v == null || v === "") continue;
     out[k] = typeof v === "string" ? trimText(v, 200) : v;
   }
   return out;

@@ -156,6 +156,7 @@ Worker; a local proxy injects the Access JWT for the identity in a cookie (what 
 | — | new data (2026-10) | light observations, multiple pets, identification images and AI context (light estimates, pet kinds) stay in the caller's space; foreign plant ids → own space / 404 |
 | — | concurrency | three users pushing in parallel (with CAS retries) never mix; per-user revisions unique |
 | — | AI chat (2026-10, `tests/chat.test.ts`, `tests/e2e/chat.e2e.ts`) | B with A's plant id → 404 before any model call; B reusing A's chat id gets an empty conversation of B's own (no history/context of A); B cannot read A's chat images or stop A's answer; the browser cannot push `message` records; a chat stays bound to its plant; same message id → never answered twice; B's device shows none of A's chats |
+| — | AI Botanist actions (2026-10, `tests/actions-api.test.ts`) | the action parser receives only the caller's own plants/places (B's prompt never contains A's names and vice versa); targets resolve only to the caller's rows; B cannot confirm, continue or cancel A's card (404, same as missing); a card cannot be widened to plants outside it (400); a forged card cannot be pushed (`message` is server-only); execution writes only under the verified user id |
 
 Run: `npm test` (unit + server isolation) and `npm run test:e2e` (builds, then the browser tests).
 Each suite was also checked against deliberately broken code (unscoped pull, no legacy gate, no client

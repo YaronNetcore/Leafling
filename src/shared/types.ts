@@ -190,6 +190,12 @@ export interface ChatMessage extends BaseRecord {
   /** Number of images attached to this (user) message; served from R2 via /api/v1/chat/attachments. */
   attachments?: number;
   replyTo?: string;
+  /** AI Botanist action card (shared/actions.ts) — the server-validated proposal the user confirms or cancels. */
+  proposal?: import("./actions.ts").ActionProposal | null;
+  /** This message asked a short question about an action request; the next message answers it. */
+  clarify?: { question: string; original: string } | null;
+  /** The result message written together with the last records of a confirmed card. */
+  actionResult?: { proposalId: string; status: string };
 }
 
 export interface Mutation {
