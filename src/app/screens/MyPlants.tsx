@@ -1,9 +1,9 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { daysBetween, displayName, relativeDays, soilCheckPlan, STATUS_LABEL } from "../../shared/domain.ts";
+import { daysBetween, displayName, isOpenCase, needsCarePlantIds, relativeDays, soilCheckPlan, STATUS_LABEL } from "../../shared/domain.ts";
 import { lightFit, speciesById } from "../../shared/species.ts";
-import type { Location, Plant, PlantEvent, Status } from "../../shared/types.ts";
-import { archivePlant, deletePlant, removeFromWishlist, speciesOf, toggleFavorite, useEvents, useLocations, usePlants, useWishlist } from "../data/store.ts";
+import type { HealthCase, Location, Plant, PlantEvent, Status } from "../../shared/types.ts";
+import { archivePlant, deletePlant, removeFromWishlist, speciesOf, toggleFavorite, useEvents, useHealth, useLocations, usePlants, useWishlist } from "../data/store.ts";
 import { Icon } from "../ui/icons.tsx";
 import { Button, Card, EmptyState, IconButton, Input, PageHeader, PlantImage, Sheet, SpeciesImage, TabRow, cx, useToast } from "../ui/ui.tsx";
 
@@ -28,7 +28,7 @@ export function careLine(p: Plant, events: PlantEvent[], now: number): { label: 
 
 const FIT_LABEL = { fit: "מתאים", tolerated: "סביר", poor: "פחות מתאים" } as const;
 
-export function PlantCard({ p, events, location, onMenu, list }: { p: Plant; events: PlantEvent[]; location?: Location; onMenu: () => void; list?: boolean }) {
+export function PlantCard({ p, events, location, onMenu, list, issue }: { p: Plant; events: PlantEvent[]; location?: Location; onMenu: () => void; list?: boolean; issue?: HealthCase }) {
   const nav = useNavigate();
   const sp = speciesOf(p);
   const care = careLine(p, events, Date.now());
@@ -42,6 +42,13 @@ export function PlantCard({ p, events, location, onMenu, list }: { p: Plant; eve
   );
   const info = (
     <div className="mt-2 space-y-1.5">
+      {issue && (
+        <div className="flex items-center gap-2" data-testid="plant-issue">
+          <span className="grid size-7 shrink-0 place-items-center rounded-full bg-sun-bg text-soil"><Icon name="steth" size={16} /></span>
+          <span className="truncate text-[13px] font-semibold text-ink">{issue.title}</span>
+          <span className="ms-auto whitespace-nowrap text-[12px] text-muted">{issue.source === "user" ? "דיווח שלך" : issue.source === "ai" ? "אבחון AI" : "איש מקצוע"}</span>
+        </div>
+      )}
       <div className="flex items-center gap-2">
         <span className="grid size-7 shrink-0 place-items-center rounded-full bg-water-bg text-water"><Icon name={care.label === "בדיקת אדמה" ? "drop" : p.status === "rooting" ? "root" : "seed"} size={16} /></span>
         <span className="truncate text-[13px] text-muted">{care.label}</span>
@@ -92,6 +99,7 @@ export default function MyPlants() {
   const toast = useToast();
   const plants = usePlants();
   const events = useEvents();
+  const cases = useHealth();
   const locations = useLocations();
   const wishlist = useWishlist();
   const [tab, setTab] = useState<Tab>("all");
@@ -113,7 +121,9 @@ export default function MyPlants() {
     const now = Date.now();
     const q = query.trim().toLowerCase();
     let xs = (plants ?? []).filter((p) => (showArchived ? !!p.archivedAt : !p.archivedAt));
-    if (tab !== "all" && tab !== "wishlist") xs = xs.filter((p) => p.status === tab);
+    // "חולים": marked sick OR an open health issue (derived from the health cases — see needsCarePlantIds).
+    if (tab === "sick") { const ids = needsCarePlantIds(xs, cases ?? []); xs = xs.filter((p) => ids.has(p.id)); }
+    else if (tab !== "all" && tab !== "wishlist") xs = xs.filter((p) => p.status === tab);
     if (q) xs = xs.filter((p) => [displayName(p), p.commonName, p.scientificName, ...(speciesById(p.speciesId)?.aliases ?? [])].some((s) => s?.toLowerCase().includes(q)));
     const name = (p: Plant) => displayName(p);
     const cmp: Record<Sort, (a: Plant, b: Plant) => number> = {
@@ -124,7 +134,12 @@ export default function MyPlants() {
       next_check: (a, b) => soilCheckPlan(a, evByPlant.get(a.id) ?? [], speciesOf(a), now).nextCheckAt - soilCheckPlan(b, evByPlant.get(b.id) ?? [], speciesOf(b), now).nextCheckAt,
     };
     return xs.sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite) || cmp[sort](a, b));
-  }, [plants, tab, query, sort, locById, evByPlant, showArchived]);
+  }, [plants, tab, query, sort, locById, evByPlant, showArchived, cases]);
+  const openIssue = useMemo(() => {
+    const m = new Map<string, HealthCase>();
+    for (const c of [...(cases ?? [])].filter(isOpenCase).sort((a, b) => a.openedAt.localeCompare(b.openedAt))) m.set(c.plantId, c);
+    return m;
+  }, [cases]);
 
   const archivedCount = (plants ?? []).filter((p) => p.archivedAt).length;
   const loading = plants === undefined;
@@ -188,7 +203,7 @@ export default function MyPlants() {
           ) : <EmptyState title="לא מצאנו צמחים כאן" text={query ? "נסי שם אחר או נקי את החיפוש." : "אין צמחים בקטגוריה הזו כרגע."} />
         ) : (
           <div className={cx("mt-4", view === "grid" ? "grid grid-cols-2 gap-3" : "space-y-3")}>
-            {list.map((p) => <PlantCard key={p.id} p={p} list={view === "list"} events={evByPlant.get(p.id) ?? []} location={locById.get(p.locationId ?? "")} onMenu={() => setMenuFor(p)} />)}
+            {list.map((p) => <PlantCard key={p.id} p={p} list={view === "list"} events={evByPlant.get(p.id) ?? []} location={locById.get(p.locationId ?? "")} onMenu={() => setMenuFor(p)} issue={openIssue.get(p.id)} />)}
           </div>
         )}
         {tab !== "wishlist" && archivedCount > 0 && (

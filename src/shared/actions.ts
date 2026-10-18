@@ -1,5 +1,5 @@
 import { STATUS_LABEL, displayName } from "./domain.ts";
-import type { DatePrecision, Location, Plant, Status } from "./types.ts";
+import type { DatePrecision, HealthCase, Location, Plant, PlantEvent, Reminder, Status } from "./types.ts";
 
 // Natural-language plant updates from the AI Botanist chat ("השקתי את כל הצמחים במרפסת").
 // Pure, deterministic rules shared by the Worker (which decides) and the app (which renders):
@@ -339,3 +339,26 @@ export function proposalQuestion(p: Pick<ActionProposal, "action" | "targets" | 
   if (!n) return "לא נשארו צמחים ברשימה. אפשר להוסיף צמחים או לבטל.";
   return `${p.scopeLabel}. לשמור ${what} ${count} ${p.action === "reminder" ? `(${when})` : `— ${when}`}?`;
 }
+
+// ---------------------------------------------------------------- the records of a confirmed card
+
+const EVENT_TYPE: Partial<Record<ActionProposal["action"], string>> = { water: "watering", fertilize: "fertilizing", soil_check: "soil_check", treatment: "treatment_started", move: "location_changed", note: "note" };
+
+export const actionTitle = (p: ActionProposal) =>
+  p.action === "treatment" ? (p.details.pest ? `טיפול נגד ${p.details.pest}` : "טיפול") : p.action === "move" ? `העברה ל${p.details.toLocationName ?? ""}` : p.action === "reminder" ? `תזכורת: ${p.details.reminderText ?? ""}` : ACTION_LABEL[p.action];
+
+export interface Affected { plant: Plant | undefined; plantId: string; name: string; event?: PlantEvent; issue?: HealthCase; reminder?: Reminder; result: string }
+
+/** Per plant: the stored record of this card (matched by the card id, or — for cards saved before 2026-10-18 — by type, source and the exact stored instant). */
+export function affectedPlants(p: ActionProposal, plants: Plant[], events: PlantEvent[], cases: HealthCase[], reminders: Reminder[]): Affected[] {
+  const type = EVENT_TYPE[p.action];
+  return (p.confirmedIds ?? []).map((id) => {
+    const event = type ? events.find((e) => e.plantId === id && !e.deletedAt && e.type === type && e.payload?.via === "ai_chat" && (e.payload.actionId === p.id || (!e.payload.actionId && e.occurredAt === p.occurredAt))) : undefined;
+    const issue = p.action === "treatment" ? cases.find((c) => c.id === event?.payload.healthCaseId) : undefined;
+    const want = p.action === "reminder" ? { text: p.details.reminderText, at: p.occurredAt } : p.followUp ? { text: p.followUp.text, at: p.followUp.dueAt } : null;
+    const reminder = want ? reminders.find((r) => r.plantId === id && !r.deletedAt && (r.groupId === p.id || (!r.groupId && r.source === "ai_confirmed" && r.text === want.text && r.nextAt === want.at))) : undefined;
+    const plant = plants.find((x) => x.id === id);
+    return { plant, plantId: id, name: plant ? displayName(plant) : p.targets.find((t) => t.plantId === id)?.name ?? "", event, issue, reminder, result: p.results?.[id] ?? "pending" };
+  });
+}
+

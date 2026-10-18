@@ -4,6 +4,7 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom";
 import { db } from "./data/db.ts";
 import { useProfile } from "./data/store.ts";
 import { onSync, type SyncState } from "./data/sync.ts";
+import { ActionUpdates } from "./screens/ActionUpdates.tsx";
 import AddPlant from "./screens/AddPlant.tsx";
 import { Diagnose, Identify } from "./screens/AiScreens.tsx";
 import { Botanist } from "./screens/Botanist.tsx";
@@ -76,6 +77,7 @@ export default function App() {
           <Route path="/find/species/:id" element={<SpeciesPage />} />
           <Route path="/plants" element={<MyPlants />} />
           <Route path="/plants/:id" element={<PlantDetails />} />
+          <Route path="/updates/:id" element={<ActionUpdates />} />
           <Route path="/locations" element={<Locations />} />
           <Route path="/locations/:id" element={<LocationPage />} />
           <Route path="/tools" element={<Tools />} />

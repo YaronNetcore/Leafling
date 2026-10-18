@@ -4,7 +4,7 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { addDaysToDay, isoDay, localParts, type ActionProposal } from "../src/shared/actions.ts";
-import { todayTasks } from "../src/shared/domain.ts";
+import { needsCarePlantIds, todayTasks } from "../src/shared/domain.ts";
 import type { Plant, PlantEvent, Reminder } from "../src/shared/types.ts";
 import { Client, OWNER_EMAIL, mut, startWorker, type Harness } from "./helpers/worker.ts";
 
@@ -286,14 +286,19 @@ describe("treatments, health cases, follow-ups, reminders, soil checks and moves
     const tr = all.filter((x) => x.entity === "event" && x.data.type === "treatment_started").map((x) => x.data as unknown as PlantEvent);
     expect(tr).toHaveLength(5);
     for (const e of tr) {
-      expect(e.payload).toMatchObject({ product: "קונפידור", pest: "אקריות", reportedBy: "user", verified: false });
+      expect(e.payload).toMatchObject({ product: "קונפידור", pest: "אקריות", reportedBy: "user", verified: false, actionId: p.id, title: "טיפול נגד אקריות" });
+      expect(e).toMatchObject({ inHistory: true, inJournal: true }); // one record: history AND journal
       expect(cases.some((c) => c.id === e.payload.healthCaseId && c.plantId === e.plantId)).toBe(true);
       expect(isoDay(localParts(Date.parse(e.occurredAt), TZ))).toBe("2026-10-13");
     }
     expect(tr.find((e) => e.plantId === "fi")!.payload.healthCaseId).toBe("hc-fi");
     const rem = all.filter((x) => x.entity === "reminder").map((x) => x.data as unknown as Reminder);
     expect(rem).toHaveLength(5);
-    expect(rem.every((x) => x.kind === "inspect" && !x.everyDays && !/לרסס|ריסוס/.test(x.text))).toBe(true);
+    expect(rem.every((x) => x.kind === "inspect" && !x.everyDays && !/לרסס|ריסוס/.test(x.text) && x.groupId === p.id)).toBe(true);
+    // Sick plants (derived from the open cases) — all five, without changing their own status.
+    const plantRecs = all.filter((x) => x.entity === "plant").map((x) => x.data as unknown as Plant);
+    expect([...needsCarePlantIds(plantRecs, cases as never)].sort()).toEqual([...ACTIVE].sort());
+    expect(plantRecs.find((x) => x.id === "cut")!.status).toBe("rooting");
     // Today shows them when due (existing reminder system).
     const plants = all.filter((x) => x.entity === "plant").map((x) => x.data as unknown as Plant);
     const tasks = todayTasks(plants, [], rem, () => undefined, Date.parse(rem[0].nextAt) + 3_600_000);
@@ -346,7 +351,8 @@ describe("treatments, health cases, follow-ups, reminders, soil checks and moves
     const all = await records(A);
     expect(all.find((x) => x.entity === "plant" && x.id === "m2")!.data.locationId).toBe("salon");
     const mv = all.filter((x) => x.entity === "event" && x.data.type === "location_changed").map((x) => x.data.payload);
-    expect(mv).toEqual([{ from: "bal", to: "salon", via: "ai_chat" }]);
+    expect(mv).toHaveLength(1);
+    expect(mv[0]).toMatchObject({ from: "bal", to: "salon", via: "ai_chat", actionId: p.id });
   });
 
   it("partial failure: a plant removed before confirming is reported per plant; the rest is saved", async () => {
@@ -407,5 +413,86 @@ describe("isolation between users", () => {
     await confirm(B, pb);
     expect((await events(A, "watering"))).toHaveLength(0);
     expect((await events(B, "watering")).map((e) => e.plantId)).toEqual(["b-only"]);
+  });
+});
+
+describe("bulk treatment of 26 plants (the reported case): records, read paths, truthful counts", () => {
+  let A: Client;
+  const chatId = randomUUID();
+  const ids = Array.from({ length: 28 }, (_, i) => `t${String(i + 1).padStart(2, "0")}`);
+  beforeAll(async () => {
+    A = await Client.signIn(h, person("a5"));
+    await A.push([mut("profile", "me", { id: "me", onboardingDone: true, pets: [], interests: [], places: [], help: {}, onboardingStep: 6 })]);
+    for (let i = 0; i < ids.length; i += 8) {
+      await A.push(ids.slice(i, i + 8).map((id, j) => mut("plant", id, { id, commonName: `צמח ${i + j + 1}`, scientificName: "", status: (i + j) % 5 === 0 ? "seedling" : "plant", ordinal: 1, createdAt: new Date().toISOString() })));
+    }
+    // An existing open spider-mite case on one plant (must be reused), a resolved one on another (must not).
+    await A.push([
+      mut("health", "old-open", { id: "old-open", plantId: "t03", title: "אקריות", state: "active", source: "ai", openedAt: "2026-10-01T10:00:00.000Z", createdAt: "2026-10-01T10:00:00.000Z" }),
+      mut("health", "old-done", { id: "old-done", plantId: "t04", title: "אקריות", state: "resolved", source: "user", openedAt: "2026-09-01T10:00:00.000Z", resolvedAt: "2026-09-10T10:00:00.000Z", createdAt: "2026-09-01T10:00:00.000Z" }),
+    ]);
+  });
+
+  it("26 of 28 plants confirmed → 26 treatments dated 13.10, 26 open user-reported cases, 26 grouped inspection reminders; exact count in the message", async () => {
+    h.actionParse = { action: "treatment", scope: "all", pest: "אקריות", product: "קונפידור", date_text: "ב־13.10.26", already_done: true };
+    const r = await say(A, chatId, "טיפלתי בכל הצמחים נגד אקריות עם קונפידור ב־13.10.26");
+    const p = await card(A, r.answerId);
+    expect(p.targets).toHaveLength(28);
+    const chosen = ids.slice(0, 26);
+    const res = await confirm(A, p, chosen, true);
+    expect(res.http).toBe(200);
+    expect(res.message).toContain("עודכנו 26 צמחים בהצלחה 🌱");
+    expect(Object.values(res.results).filter((x) => x === "saved")).toHaveLength(26);
+
+    const all = await records(A);
+    const tr = all.filter((x) => x.entity === "event" && x.data.type === "treatment_started").map((x) => x.data as unknown as PlantEvent);
+    expect(tr.map((e) => e.plantId).sort()).toEqual(chosen);
+    expect(tr.every((e) => isoDay(localParts(Date.parse(e.occurredAt), TZ)) === "2026-10-13" && e.inHistory && e.inJournal)).toBe(true);
+    const cases = all.filter((x) => x.entity === "health").map((x) => x.data);
+    expect(cases.filter((c) => c.plantId === "t03")).toHaveLength(1); // reused
+    expect(tr.find((e) => e.plantId === "t03")!.payload.healthCaseId).toBe("old-open");
+    expect(cases.filter((c) => c.plantId === "t04").map((c) => c.state).sort()).toEqual(["active", "resolved"]); // resolved one not reopened; a new one
+    const open = cases.filter((c) => c.state === "active");
+    expect(open).toHaveLength(26);
+    const plants = all.filter((x) => x.entity === "plant").map((x) => x.data as unknown as Plant);
+    expect([...needsCarePlantIds(plants, cases as never)].sort()).toEqual(chosen);
+    const rem = all.filter((x) => x.entity === "reminder").map((x) => x.data as unknown as Reminder);
+    expect(rem).toHaveLength(26);
+    expect(new Set(rem.map((x) => x.groupId))).toEqual(new Set([p.id]));
+    // Not in the card → nothing written for t27/t28.
+    expect(all.some((x) => (x.data as { plantId?: string }).plantId === "t27" || (x.data as { plantId?: string }).plantId === "t28")).toBe(false);
+
+    // Repeated confirm (network retry / double tap): same answer, no new records.
+    const before = all.length;
+    const again = await confirm(A, p, chosen, true);
+    expect(again.message).toBe(res.message);
+    expect((await records(A)).length).toBe(before);
+  });
+
+  it("AI Botanist context sees the confirmed treatment and the open case of that plant", async () => {
+    h.chatReply = { text: "רשום שטופל בקונפידור ב־13.10." };
+    h.anthropic.length = 0;
+    const r = await say(A, randomUUID(), "מה לגבי האקריות?", "t05");
+    expect(r.status).toBe(200);
+    const body = h.anthropic.at(-1)!.body as { messages: { content: { type: string; text?: string }[] }[] };
+    const turn = body.messages.at(-1)!.content.filter((x) => x.type === "text").map((x) => x.text).join("");
+    expect(turn).toContain("treatment_started");
+    expect(turn).toContain("קונפידור");
+    expect(turn).toContain("אקריות");
+    expect(turn).toContain("healthCases");
+    expect(turn).not.toContain("actionId");
+  });
+
+  it("no false success: when nothing could be saved the reply says so", async () => {
+    h.actionParse = { action: "water", scope: "named", plants: [{ text: "צמח 27", keys: [], all_matching: false }], date_text: "אתמול" };
+    const p = await card(A, (await say(A, chatId, "השקיתי את צמח 27 אתמול")).answerId);
+    expect(p.targets.map((t) => t.plantId)).toEqual(["t27"]);
+    await A.push([mut("plant", "t27", { deletedAt: new Date().toISOString() }, 2 ** 31)]);
+    const res = await confirm(A, p);
+    expect(res.http).toBe(200);
+    expect(res.message).not.toContain("בהצלחה");
+    expect(res.message).toContain("לא עודכן אף צמח");
+    expect(res.status).toBe("partial");
+    expect((await msg(A, `${p.id}-r`))!.text).not.toContain("בהצלחה");
   });
 });

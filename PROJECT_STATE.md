@@ -124,6 +124,11 @@ AI Botanist actions (2026-10-18) — natural-language plant updates from the cha
 - Deployed: `46c9c7b` → Worker version `03bcabc4`, ACTIVE at 100% (2026-10-18 05:59 UTC); verify:live all checks pass (secret, bindings, schema v3, owner data intact). This docs commit gets its own build.
 - Tests: 131 unit/integration/isolation (32 new) + 62 browser (3 new) + 5 harness, all passing (mocked model; Chromium at iPhone size, not a real iPhone).
 
+Fix 2026-10-18 — bulk treatment "not visible" (details: `docs/AI_ACTIONS.md` § Incident):
+- Investigated production read-only: the 26-plant treatment was fully committed (26 events dated 13.10, 26 open user-reported cases, 26 reminders, truthful success message). The records were not shown in the Journal or "חולים", History named it generically, and there was no link to the plants.
+- Fixed on the read side (existing records now show, no data rewritten or replayed): health events in History AND Journal ("טיפול נגד אקריות"), "חולים" derived from open health cases, Health tab labels user reports as unverified, "צפייה בצמחים שעודכנו" (`/updates/{card}`) built from stored records, "עדכונים אחרונים מהבוטנאי" on Today, grouped reminders with per-plant completion, plant page `?tab=`.
+- Tests: 138 unit/integration/isolation + 62 browser + 5 harness, all passing (26-plant bulk, legacy production record shape, reload, Sick, Journal, History, Today grouping, case reuse, no duplicates, no false success, AI context, isolation).
+
 Not done / known issues:
 - Live AI works in production (owner's identify ×5 and ask ×1 on 2026-10-02, all ok). The new streaming chat has not been used live yet — the dev environment cannot pass Cloudflare Access; the first signed-in chat gives real first-token timings in `npm run verify:live`.
 - Catalog content is an unverified editorial draft (no primary-source check yet); no licensed plant photos added yet.

@@ -15,7 +15,7 @@ export type Topic = "watering" | "propagation" | "health" | "light" | "feeding" 
 const TOPIC_WORDS: Record<Topic, RegExp> = {
   watering: /השקי|השקא|להשקות|מים|יבש|רטוב|לחות האדמה|אדמה|מצע רטוב|בדיקת אדמה|water|dry|soggy|moist/i,
   propagation: /ייחור|יחור|שורש|השרש|ריבוי|להעביר לכד|לעציץ מים|מים עם|זרע|זריע|נביט|שתיל|propagat|cutting|root|seed|germinat/i,
-  health: /מצהיב|צהוב|חום|כתם|כתמים|נבול|נבל|נשיר|נושר|חרק|מזיק|כנימ|אקרית|תריפס|זבוב|עובש|ריקב|מחלה|חולה|פטרי|קורים|חורים|stress|yellow|brown|spot|pest|mite|rot|mold|disease|droop/i,
+  health: /מצהיב|צהוב|חום|כתם|כתמים|נבול|נבל|נשיר|נושר|חרק|מזיק|כנימ|אקרית|אקריו|קרדי|ריסוס|ריססתי|קונפידור|תריפס|זבוב|עובש|ריקב|מחלה|חולה|פטרי|קורים|חורים|stress|yellow|brown|spot|pest|mite|rot|mold|disease|droop/i,
   light: /אור|שמש|חלון|צל|מואר|חשוך|light|sun|window|shade/i,
   feeding: /דשן|דישון|לדשן|fertili[sz]|feed/i,
   repotting: /עציץ|העבר|להעביר|שתיל|גודל עציץ|מצע|repot|pot\b|soil mix/i,
@@ -55,7 +55,7 @@ function compactPayload(p: Record<string, unknown> | undefined): Record<string, 
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(p ?? {})) {
     // Internal ids and bookkeeping are not useful to the model (treatment: product / pest / reportedBy stay).
-    if (k === "photoId" || k === "photoIds" || k === "healthCaseId" || k === "via" || v == null || v === "") continue;
+    if (k === "photoId" || k === "photoIds" || k === "healthCaseId" || k === "via" || k === "actionId" || v == null || v === "") continue;
     out[k] = typeof v === "string" ? trimText(v, 200) : v;
   }
   return out;

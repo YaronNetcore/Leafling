@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
-import { daysBetween, displayName, fertilizePlan, relativeDays, soilCheckPlan, STATUS_LABEL } from "../../shared/domain.ts";
+import { daysBetween, displayName, fertilizePlan, healthEventText, inJournal, relativeDays, soilCheckPlan, STATUS_LABEL } from "../../shared/domain.ts";
 import type { HealthCase, Photo, Plant, PlantEvent, Status } from "../../shared/types.ts";
 import { LIGHT_SOURCE_LABEL } from "../../shared/light.ts";
 import { LIGHT_LABEL } from "../../shared/species.ts";
@@ -229,7 +229,7 @@ function PhotoThumb({ id, className, onClick }: { id: string; className?: string
 }
 
 function JournalTab({ p, events, photos, onAdd, onOpenPhoto, onCompare, onTimelapse }: { p: Plant; events: PlantEvent[]; photos: Photo[]; onAdd: () => void; onOpenPhoto: (id: string) => void; onCompare: () => void; onTimelapse: () => void }) {
-  const items = events.filter((e) => e.inJournal).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const items = events.filter((e) => inJournal(e) && !e.deletedAt).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   const sprouting = p.status === "seedling" || p.status === "rooting";
   return (
     <div className="space-y-3">
@@ -255,6 +255,12 @@ function JournalTab({ p, events, photos, onAdd, onOpenPhoto, onCompare, onTimela
                 {e.type === "sowing" && <div className="mt-1 text-[16px] font-semibold text-ink">🌱 זריעה{e.payload.seedCount ? ` · ${e.payload.seedCount} זרעים` : ""}</div>}
                 {e.type === "propagation_started" && <div className="mt-1 text-[16px] font-semibold text-ink">✂️ התחלת השרשה</div>}
                 {e.type === "germination_update" && <div className="mt-1 text-[16px] font-semibold text-ink">🌱 נבטו {String(e.payload.germinated ?? "")}</div>}
+                {(() => { const h = healthEventText(e); return h && (
+                  <div data-testid="journal-health">
+                    <div className="mt-1 text-[16px] font-semibold text-ink">{e.type === "treatment_started" ? "🧴" : "🔎"} {h.title}</div>
+                    {h.detail && <div className="mt-0.5 text-[14px] text-muted">{h.detail}</div>}
+                  </div>
+                ); })()}
                 {typeof e.payload.text === "string" && e.payload.text && <p className="mt-1 whitespace-pre-wrap text-[15px] leading-relaxed text-text">{e.payload.text}</p>}
               </Card>
             </li>
@@ -300,18 +306,19 @@ function HistoryTab({ events }: { events: PlantEvent[] }) {
   const locations = useLocations();
   const locName = (id: unknown) => (id ? locations?.find((l) => l.id === id)?.name ?? "מיקום שנמחק" : "ללא מיקום");
   const types = HIST.find((h) => h.id === f)!.types;
-  const items = events.filter((e) => e.inHistory && (!types.length || types.includes(e.type))).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
+  const items = events.filter((e) => e.inHistory && !e.deletedAt && (!types.length || types.includes(e.type))).sort((a, b) => b.occurredAt.localeCompare(a.occurredAt));
   return (
     <div>
       <TabRow tabs={HIST.map((h) => ({ id: h.id, label: h.label }))} value={f} onChange={setF} />
       <ul className="mt-3 space-y-2">
         {!items.length && <li className="p-6 text-center text-muted">אין אירועים בסינון הזה.</li>}
         {items.map((e) => {
-          const [label, icon] = EV_LABEL[e.type] ?? [e.type, "info" as IconName];
+          const health = healthEventText(e);
+          const [label, icon] = health ? [health.title, "steth" as IconName] : EV_LABEL[e.type] ?? [e.type, "info" as IconName];
           return (
             <li key={e.id} className="flex items-center gap-3 rounded-2xl bg-surface p-3 shadow-soft">
               <span className="grid size-10 place-items-center rounded-full bg-sage text-green"><Icon name={icon} size={20} /></span>
-              <div className="flex-1"><div className="text-[15px] font-semibold text-ink">{label}</div><div className="text-[13px] text-muted">{describe(e, locName)}</div></div>
+              <div className="flex-1" data-testid="history-item"><div className="text-[15px] font-semibold text-ink">{label}</div><div className="text-[13px] text-muted">{health ? health.detail : describe(e, locName)}</div></div>
               <div className="text-[12px] text-muted">{e.precision === "unknown" ? "?" : new Date(e.occurredAt).toLocaleDateString("he-IL")}</div>
             </li>
           );
@@ -339,13 +346,13 @@ function HealthTab({ p, cases, events }: { p: Plant; cases: HealthCase[]; events
         </div>
       ) : active.map((c) => (
         <Card key={c.id} className="p-4">
-          <div className="flex items-center justify-between gap-2"><h3 className="text-[18px] font-bold text-ink">{c.title}</h3><span className="text-[12px] text-muted">{c.source === "ai" ? "אבחון AI" : c.source === "professional" ? "איש/אשת מקצוע" : "שלי"}</span></div>
+          <div className="flex items-center justify-between gap-2"><h3 className="text-[18px] font-bold text-ink">{c.title}</h3><span className="text-[12px] text-muted">{c.source === "ai" ? "אבחון AI" : c.source === "professional" ? "איש/אשת מקצוע" : "דיווח שלך · לא אומת"}</span></div>
           {c.likelyCause && <p className="mt-1 text-[15px] text-text">{c.likelyCause}</p>}
           {c.confidence && <div className="mt-2"><ConfidenceBadge value={c.confidence} /></div>}
           {c.notes && <p className="mt-2 whitespace-pre-wrap text-[14px] text-muted">{c.notes}</p>}
           {treatments(c.id).length > 0 && (
             <ul className="mt-2 space-y-1" data-testid="case-treatments">
-              {treatments(c.id).map((t) => <li key={t.id} className="flex items-center gap-2 text-[14px] text-ink"><Icon name="steth" size={15} className="text-green" />טיפול{t.payload.product ? ` ב${String(t.payload.product)}` : ""} · {t.precision === "unknown" ? "?" : new Date(t.occurredAt).toLocaleDateString("he-IL")}</li>)}
+              {treatments(c.id).map((t) => <li key={t.id} className="flex items-center gap-2 text-[14px] text-ink"><Icon name="steth" size={15} className="text-green" />טופל{t.payload.product ? ` ב${String(t.payload.product)}` : ""} · {t.precision === "unknown" ? "?" : new Date(t.occurredAt).toLocaleDateString("he-IL")}</li>)}
             </ul>
           )}
           <Button size="md" variant="secondary" icon="check" className="mt-3 w-full" onClick={async () => { if (confirm("לסיים את המעקב אחרי הבעיה הזו?")) { await resolveHealthCase(c); if (p.status === "sick") setAskStatus(true); toast("המעקב הסתיים 💚"); } }}>הצמח התאושש — לסיים מעקב</Button>
@@ -456,7 +463,7 @@ export default function PlantDetails() {
   const cases = useHealth(id) ?? [];
   const reminders = useReminders(id) ?? [];
   const locations = useLocations() ?? [];
-  const [tab, setTab] = useState<Tab>("care");
+  const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => t.id === params.get("tab")) ? params.get("tab") as Tab : "care"));
   const [sheet, setSheet] = useState<null | "soil" | "note" | "move" | "edit" | "reminder" | "compare" | "timelapse" | "status" | "photo-source">(null);
   const [photoId, setPhotoId] = useState<string | null>(null);
   const [aboutTab, setAboutTab] = useState<"propagation" | "safety" | "problems">("propagation");

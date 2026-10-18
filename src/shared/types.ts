@@ -143,6 +143,10 @@ export interface Reminder extends BaseRecord {
   nextAt: string;
   active: boolean;
   important?: boolean;
+  /** "ai_confirmed" when created from a confirmed AI Botanist card. */
+  source?: "user" | "ai_confirmed";
+  /** Reminders created together for several plants (one AI Botanist card) — shown as ONE grouped item in Today, completed per plant. */
+  groupId?: string | null;
 }
 
 /** One individual animal. Several pets of the same kind are allowed. `id` is missing only on pre-2026-10 profiles (see shared/pets.ts normalizePets). */

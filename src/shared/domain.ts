@@ -1,5 +1,5 @@
 import type { Species } from "./species.ts";
-import type { Confidence, Plant, PlantEvent, Reminder, Status } from "./types.ts";
+import type { Confidence, HealthCase, Plant, PlantEvent, Reminder, Status } from "./types.ts";
 
 // Pure domain rules shared by client and Worker. No I/O.
 
@@ -167,3 +167,46 @@ export function relativeDays(target: number, now: number): string {
   if (d === -1) return "אתמול";
   return `לפני ${-d} ימים`;
 }
+
+// ---------- Health issues & health events (one source of truth: health cases + events) ----------
+
+/** An open health issue: active or being monitored, not resolved. */
+export const isOpenCase = (c: Pick<HealthCase, "state" | "deletedAt">) => !c.deletedAt && c.state !== "resolved";
+
+/**
+ * "חולים" = plants marked sick OR with an open health issue (e.g. user-reported spider mites). Derived from the
+ * health cases themselves — no separate flag — so resolving the last open issue removes the plant from the list,
+ * and a seedling or cutting with an issue keeps its own status.
+ */
+export function needsCarePlantIds(plants: Pick<Plant, "id" | "status">[], cases: Pick<HealthCase, "plantId" | "state" | "deletedAt">[]): Set<string> {
+  const open = new Set(cases.filter(isOpenCase).map((c) => c.plantId));
+  return new Set(plants.filter((p) => p.status === "sick" || open.has(p.id)).map((p) => p.id));
+}
+
+/** Health events are part of the plant's story: shown in the journal as well as in history (same record, no copy). */
+export const JOURNAL_HEALTH_TYPES = new Set(["diagnosis", "treatment_started", "treatment_ended"]);
+export const inJournal = (e: Pick<PlantEvent, "inJournal" | "type">) => Boolean(e.inJournal) || JOURNAL_HEALTH_TYPES.has(e.type);
+
+/** Title + detail line for health events (History, Journal, updates). */
+export function healthEventText(e: Pick<PlantEvent, "type" | "payload">): { title: string; detail: string } | null {
+  const pl = e.payload ?? {};
+  const s = (k: string) => (typeof pl[k] === "string" && pl[k] ? String(pl[k]) : "");
+  const fromChat = pl.via === "ai_chat" ? "נרשם דרך AI Botanist" : "";
+  if (e.type === "treatment_started") {
+    const reported = pl.reportedBy === "user" ? "דיווח שלך, לא אומת" : "";
+    return {
+      title: s("pest") ? `טיפול נגד ${s("pest")}` : s("title") || "טיפול",
+      detail: [s("product") ? `חומר: ${s("product")}` : "", reported, s("notes"), fromChat].filter(Boolean).join(" · "),
+    };
+  }
+  if (e.type === "diagnosis") {
+    const user = pl.source === "user" || pl.reportedBy === "user";
+    return { title: user ? `דווח על בעיה: ${s("title")}` : `אבחון: ${s("title")}`, detail: [user ? "דיווח שלך, לא אומת" : pl.source === "ai" ? "אבחון AI" : pl.source === "professional" ? "איש/אשת מקצוע" : "", fromChat].filter(Boolean).join(" · ") };
+  }
+  if (e.type === "treatment_ended") return { title: `סיום מעקב: ${s("title")}`, detail: "" };
+  return null;
+}
+
+/** Key that groups reminders created together (one card for many plants) into one Today item. */
+export const reminderGroupKey = (r: Pick<Reminder, "id" | "groupId" | "source" | "text" | "nextAt">) =>
+  r.groupId ? `g:${r.groupId}` : r.source === "ai_confirmed" ? `t:${r.text}|${r.nextAt}` : `r:${r.id}`;

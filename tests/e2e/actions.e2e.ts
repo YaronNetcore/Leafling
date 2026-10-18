@@ -91,16 +91,70 @@ describe("AI Botanist actions (iPhone-size Chromium simulation)", () => {
     await lastCard().getByTestId("action-confirm").click();
     await expect.poll(body, { timeout: 20_000 }).toContain("עודכנו 4 צמחים בהצלחה 🌱");
 
-    await go("/plants/fi");
-    await page.getByRole("tab", { name: "בריאות" }).or(page.getByRole("button", { name: "בריאות" })).first().click();
-    await expect.poll(body, { timeout: 10_000 }).toContain("אקריות");
-    expect(await page.getByTestId("case-treatments").textContent()).toContain("טיפול בקונפידור");
+    // The card links to the persisted records (not the chat text).
+    await page.getByTestId("action-view").last().click();
+    await page.waitForURL(/\/updates\//);
+    await expect.poll(() => page.getByTestId("updates-plant").count(), { timeout: 10_000 }).toBe(4);
+    expect(await page.getByTestId("updates-summary").textContent()).toContain("4 צמחים עודכנו");
+    const rows = await page.getByTestId("updates-list").textContent();
+    expect(rows!.match(/✓ נשמר 13\.10\.2026/g)).toHaveLength(4);
+    expect(rows!.match(/בעיה פעילה: אקריות/g)).toHaveLength(4);
+    await shot("action-updates");
+    // Survives a full reload of the PWA (records come from the device database, synced from the server).
+    await page.reload();
+    await expect.poll(() => page.getByTestId("updates-plant").count(), { timeout: 20_000 }).toBe(4);
+    await page.locator('[data-testid="updates-plant"][data-plant-id="fi"]').click();
+    await page.waitForURL(/\/plants\/fi\?tab=health/);
+    await expect.poll(body, { timeout: 10_000 }).toContain("דיווח שלך · לא אומת");
+    expect(await page.getByTestId("case-treatments").textContent()).toContain("טופל בקונפידור");
     await shot("action-health");
-    await page.getByRole("tab", { name: "היסטוריה" }).or(page.getByRole("button", { name: "היסטוריה" })).first().click();
-    await expect.poll(body, { timeout: 10_000 }).toContain("התחלת טיפול");
-    expect(await body()).toContain("קונפידור · נגד אקריות · דיווח שלך");
-    await page.getByRole("tab", { name: "טיפול" }).or(page.getByRole("button", { name: "טיפול", exact: true })).first().click();
+    const tab = (name: string) => page.getByRole("tab", { name, exact: true }).or(page.getByRole("button", { name, exact: true })).first();
+    await tab("היסטוריה").click();
+    await expect.poll(body, { timeout: 10_000 }).toContain("טיפול נגד אקריות");
+    const hist = await page.getByTestId("history-item").allTextContents();
+    const item = hist.find((t) => t.includes("טיפול נגד אקריות"))!;
+    expect(item).toContain("חומר: קונפידור");
+    expect(item).toContain("דיווח שלך, לא אומת");
+    expect(item).toContain("נרשם דרך AI Botanist");
+    expect(await body()).toContain("13.10.2026");
+    await tab("יומן").click();
+    await expect.poll(() => page.getByTestId("journal-health").allTextContents(), { timeout: 10_000 }).toContain("🧴 טיפול נגד אקריותחומר: קונפידור · דיווח שלך, לא אומת · נרשם דרך AI Botanist");
+    expect(await body()).toContain("13 באוקטובר 2026");
+    await shot("action-journal");
+    await tab("טיפול").click();
     await expect.poll(body, { timeout: 10_000 }).toContain("בדיקה חוזרת לאקריות");
+
+    // "חולים": the plants with the open user-reported issue, statuses unchanged.
+    await go("/plants");
+    await page.getByRole("tab", { name: "חולים" }).or(page.getByRole("button", { name: "חולים" })).first().click();
+    await expect.poll(() => page.getByTestId("plant-issue").count(), { timeout: 10_000 }).toBe(4);
+    expect(await page.getByTestId("plant-issue").first().textContent()).toContain("דיווח שלך");
+    await shot("action-sick");
+    // Resolving one plant's issue removes only that plant.
+    await go("/plants/po?tab=health");
+    page.once("dialog", (d) => void d.accept());
+    await page.getByRole("button", { name: "הצמח התאושש — לסיים מעקב" }).click();
+    await go("/plants");
+    await page.getByRole("tab", { name: "חולים" }).or(page.getByRole("button", { name: "חולים" })).first().click();
+    await expect.poll(() => page.getByTestId("plant-issue").count(), { timeout: 10_000 }).toBe(3);
+
+    // Today: the recent bulk update is one entry; its reminders (made due now) are ONE grouped item with per-plant completion.
+    const rem = (await A.pullAll()).filter((r) => r.entity === "reminder");
+    expect(rem).toHaveLength(4);
+    await A.push(rem.map((r) => mut("reminder", r.id, { nextAt: new Date(Date.now() - 3_600_000).toISOString() }, 2 ** 31)));
+    await go("/today");
+    await page.reload();
+    await expect.poll(() => page.getByTestId("reminder-group").count(), { timeout: 20_000 }).toBe(1);
+    expect(await page.getByTestId("reminder-group").textContent()).toContain("4 צמחים");
+    expect(await page.getByTestId("recent-update").first().textContent()).toContain("טיפול נגד אקריות");
+    await page.getByTestId("reminder-group-open").click();
+    expect(await page.getByTestId("reminder-group-item").count()).toBe(4);
+    await shot("action-today");
+    await page.getByTestId("reminder-group-item").first().getByRole("button", { name: "בוצע" }).click();
+    await expect.poll(() => page.getByTestId("reminder-group").textContent(), { timeout: 10_000 }).toContain("3 צמחים");
+    // No duplicates anywhere.
+    expect(await events("treatment_started")).toHaveLength(4);
+    expect((await A.pullAll()).filter((r) => r.entity === "health" && r.data.state !== "resolved")).toHaveLength(3);
   });
 
   it("cancel writes nothing", async () => {

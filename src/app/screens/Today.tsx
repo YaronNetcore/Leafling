@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { daysBetween, displayName, todayTasks, type Task } from "../../shared/domain.ts";
-import type { Plant } from "../../shared/types.ts";
+import { daysBetween, displayName, reminderGroupKey, todayTasks, type Task } from "../../shared/domain.ts";
+import type { Plant, Reminder } from "../../shared/types.ts";
 import { db, getMeta, setMeta } from "../data/db.ts";
 import { completeReminder, postpone, recordEvent, speciesOf, useEvents, useLights, useLocations, usePhotos, usePlants, useProfile, useReminders } from "../data/store.ts";
 import { Icon, type IconName } from "../ui/icons.tsx";
 import { Button, Card, EmptyState, IconButton, PlantImage, SectionTitle, Wordmark, cx, useToast } from "../ui/ui.tsx";
 import { SoilCheckSheet } from "./PlantDetails.tsx";
+import { actionTitle, useActionCards } from "./ActionUpdates.tsx";
 
 const TASK_META: Record<Task["kind"], { label: string; icon: IconName; tone: string }> = {
   soil_check: { label: "הגיע הזמן לבדוק את האדמה", icon: "drop", tone: "bg-water-bg text-water" },
@@ -94,6 +95,50 @@ function LightSuggestion({ locId, name }: { locId: string; name: string }) {
   );
 }
 
+/** Reminders created together for several plants (one AI Botanist card): ONE item, completed per plant. */
+function ReminderGroupCard({ items, text }: { items: { t: Task; plant: Plant }[]; text: string }) {
+  const nav = useNavigate();
+  const toast = useToast();
+  const [open, setOpen] = useState(false);
+  const done = async (ids: string[]) => {
+    for (const id of ids) { const rec = await db.reminders.get(id); if (rec?.active) await completeReminder(rec); }
+    toast(ids.length > 1 ? `סומנו ${ids.length} צמחים כבוצע` : "בוצע");
+  };
+  return (
+    <Card className="rise p-3" >
+      <div data-testid="reminder-group">
+        <div className="flex items-center gap-3">
+          <span className="grid size-12 shrink-0 place-items-center rounded-full bg-sage text-green"><Icon name="bell" size={22} /></span>
+          <div className="min-w-0 flex-1">
+            <div className="text-[17px] font-bold text-ink">{text}</div>
+            <div className="text-[14px] text-muted">{items.length} צמחים · כל צמח מסומן בנפרד</div>
+          </div>
+        </div>
+        <div className="no-scrollbar -mx-1 mt-2 flex gap-1.5 overflow-x-auto px-1">
+          {items.slice(0, 10).map(({ plant }) => <PlantImage key={plant.id} plant={plant} species={speciesOf(plant)} className="size-10 shrink-0" />)}
+        </div>
+        <div className="mt-3 flex gap-2">
+          <Button size="sm" className="flex-1" data-testid="reminder-group-open" onClick={() => setOpen(!open)}>{open ? "הסתרה" : "לבדוק לפי צמח"}</Button>
+          <Button size="sm" variant="secondary" data-testid="reminder-group-all" onClick={() => { if (confirm(`לסמן את כל ${items.length} הצמחים כבוצע?`)) void done(items.map((i) => i.t.reminderId!)); }}>כולם בוצעו</Button>
+        </div>
+        {open && (
+          <ul className="mt-3 space-y-1.5">
+            {items.map(({ t, plant }) => (
+              <li key={t.key} className="flex items-center gap-2 rounded-2xl bg-surface-2 p-2" data-testid="reminder-group-item">
+                <button className="pressable flex min-w-0 flex-1 items-center gap-2 text-start" onClick={() => nav(`/plants/${plant.id}?tab=health`)}>
+                  <PlantImage plant={plant} species={speciesOf(plant)} className="size-10 shrink-0" />
+                  <span className="truncate text-[15px] font-semibold text-ink">{displayName(plant)}</span>
+                </button>
+                <Button size="sm" variant="secondary" icon="check" onClick={() => void done([t.reminderId!])}>בוצע</Button>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </Card>
+  );
+}
+
 export default function Today() {
   const nav = useNavigate();
   const plants = usePlants();
@@ -111,6 +156,23 @@ export default function Today() {
   const tasks = useMemo(() => todayTasks(active, events ?? [], reminders ?? [], speciesOf, Date.now()), [active, events, reminders]);
   const byId = new Map(active.map((p) => [p.id, p]));
   const busy = new Set(tasks.map((t) => t.plantId));
+  const cards = useActionCards();
+  const recentCards = (cards ?? []).filter((m) => Date.now() - Date.parse(m.proposal!.finishedAt ?? m.at) < 14 * 86_400_000 && (m.proposal!.confirmedIds?.length ?? 0) > 1).slice(0, 3);
+  // Reminders of one bulk card collapse into one item (each plant is still completed separately).
+  const remById = new Map((reminders ?? []).map((r: Reminder) => [r.id, r]));
+  const shown: ({ kind: "task"; t: Task } | { kind: "group"; key: string; text: string; items: { t: Task; plant: Plant }[] })[] = [];
+  const groups = new Map<string, { kind: "group"; key: string; text: string; items: { t: Task; plant: Plant }[] }>();
+  for (const t of tasks) {
+    const r = t.kind === "reminder" ? remById.get(t.reminderId!) : undefined;
+    const key = r ? reminderGroupKey(r) : null;
+    const sameGroup = key && !key.startsWith("r:") ? tasks.filter((x) => x.kind === "reminder" && remById.get(x.reminderId!) && reminderGroupKey(remById.get(x.reminderId!)!) === key) : [];
+    if (key && sameGroup.length > 1) {
+      let g = groups.get(key);
+      if (!g) { g = { kind: "group", key, text: r!.text, items: [] }; groups.set(key, g); shown.push(g); }
+      const plant = byId.get(t.plantId);
+      if (plant) g.items.push({ t, plant });
+    } else shown.push({ kind: "task", t });
+  }
   const calm = active.filter((p) => !busy.has(p.id));
 
   const suggestions = useMemo(() => {
@@ -146,14 +208,32 @@ export default function Today() {
             <>
               {tasks.length ? (
                 <>
-                  <SectionTitle>מה דורש תשומת לב <span className="ms-1 rounded-full bg-green px-2.5 py-0.5 text-[14px] text-on-green">{tasks.length}</span></SectionTitle>
-                  <div className="space-y-3">{tasks.map((t) => byId.get(t.plantId) && <TaskCard key={t.key} t={t} plant={byId.get(t.plantId)!} onSoil={() => setSoilFor(byId.get(t.plantId)!)} />)}</div>
+                  <SectionTitle>מה דורש תשומת לב <span className="ms-1 rounded-full bg-green px-2.5 py-0.5 text-[14px] text-on-green">{shown.length}</span></SectionTitle>
+                  <div className="space-y-3">{shown.map((x) => x.kind === "group" ? <ReminderGroupCard key={x.key} items={x.items} text={x.text} />
+                    : byId.get(x.t.plantId) && <TaskCard key={x.t.key} t={x.t} plant={byId.get(x.t.plantId)!} onSoil={() => setSoilFor(byId.get(x.t.plantId)!)} />)}</div>
                 </>
               ) : (
                 <div className="rise mt-6 rounded-card bg-sage/70 p-6 text-center">
                   <div className="text-[22px] font-bold text-ink">הכול רגוע להיום 🌿</div>
                   <p className="mt-1 text-[16px] text-muted">אין צמחים שדורשים טיפול כרגע.</p>
                 </div>
+              )}
+              {recentCards.length > 0 && (
+                <>
+                  <SectionTitle>עדכונים אחרונים מהבוטנאי</SectionTitle>
+                  <div className="space-y-2" data-testid="recent-updates">
+                    {recentCards.map((m) => {
+                      const p = m.proposal!;
+                      const n = Object.values(p.results ?? {}).filter((x) => x === "saved").length;
+                      return (
+                        <button key={m.id} data-testid="recent-update" onClick={() => nav(`/updates/${m.id}`)} className="pressable flex w-full items-center gap-3 rounded-2xl bg-surface p-3 text-start shadow-soft">
+                          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-sage text-green"><Icon name={p.action === "treatment" ? "steth" : p.action === "water" ? "drop" : "leaf"} size={20} /></span>
+                          <span className="min-w-0 flex-1"><span className="block truncate text-[15px] font-semibold text-ink">{actionTitle(p)}</span><span className="block text-[13px] text-muted">{n} צמחים · {p.dateLabel.split(" · ")[1] ?? p.day}</span></span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
               )}
               {(suggestions.length > 0 || lightLoc) && (
                 <>

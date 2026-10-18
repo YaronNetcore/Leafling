@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { ACTION_LABEL, SOIL_LABEL, type ActionProposal } from "../../shared/actions.ts";
 import { aiErrorText } from "../data/ai.ts";
 import { cancelProposal, confirmProposal } from "../data/actions.ts";
@@ -23,16 +24,21 @@ export function ActionCard({ p }: { p: ActionProposal }) {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<string | null>(null);
   const [cancelled, setCancelled] = useState(false);
+  const [savedCount, setSavedCount] = useState<number | null>(null);
+  const nav = useNavigate();
 
   const status = result ? "done" : cancelled ? "cancelled" : p.status;
   if (status === "superseded") return <p className="me-auto px-2 text-[13px] text-muted" data-testid="action-status">ההצעה עודכנה — ראו למטה.</p>;
   if (status === "cancelled") return <p className="me-auto px-2 text-[13px] text-muted" data-testid="action-status">בוטל — לא נשמר דבר.</p>;
   if (status === "done" || status === "partial") {
-    const saved = Object.values(p.results ?? {}).filter((x) => x === "saved").length;
+    const saved = savedCount ?? Object.values(p.results ?? {}).filter((x) => x === "saved").length;
     return (
-      <p className="me-auto flex items-center gap-1.5 px-2 text-[13px] font-semibold text-green" data-testid="action-status">
-        <Icon name="check" size={16} />{result ?? `${saved === 1 ? "נשמר לצמח אחד" : `נשמר ל־${saved} צמחים`}${status === "partial" ? " · חלק לא נשמרו" : ""}`}
-      </p>
+      <div className="me-auto space-y-1.5 px-2">
+        <p className={cx("flex items-center gap-1.5 text-[13px] font-semibold", saved ? "text-green" : "text-heat")} data-testid="action-status">
+          <Icon name={saved ? "check" : "info"} size={16} />{result ?? (!saved ? "לא נשמר אף צמח" : `${saved === 1 ? "נשמר לצמח אחד" : `נשמר ל־${saved} צמחים`}${status === "partial" ? " · חלק לא נשמרו" : ""}`)}
+        </p>
+        {saved > 0 && <Button size="sm" variant="secondary" icon="leaf" data-testid="action-view" onClick={() => nav(`/updates/${p.id}`)}>צפייה בצמחים שעודכנו</Button>}
+      </div>
     );
   }
 
@@ -42,6 +48,8 @@ export function ActionCard({ p }: { p: ActionProposal }) {
     setBusy("save"); setError(null);
     try {
       const r = await confirmProposal(p, resume ? null : p.targets.filter((t) => sel.has(t.plantId)).map((t) => t.plantId), followUp, (d, t) => setProgress([d, t]));
+      // Only what the server reports as committed: the message and count come from the execute response.
+      setSavedCount(Object.values(r.results).filter((x) => x === "saved").length);
       setResult(r.message ?? "נשמר");
     } catch (e) {
       const code = (e as { code?: string }).code ?? "network";

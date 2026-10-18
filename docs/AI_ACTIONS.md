@@ -23,7 +23,16 @@
 | reminder | `reminder` (kind inspect/custom, `nextAt` 08:00 local, not recurring) → Today |
 | note | journal `note` event |
 
-History shows the treatment ("קונפידור · נגד אקריות · דיווח שלך"); the Health tab lists treatments under their case; reminders appear in Today and on the plant; the AI context sees the events and cases (internal ids stripped).
+Where the records show (one record each — no copies; `shared/domain.ts`):
+- **History** and **Journal** (יומן): the same `treatment_started` / `diagnosis` event. Health events are always part of the journal (`inJournal()`), so records stored before this rule (production card of 2026-10-18) appear too. Title "טיפול נגד אקריות", detail "חומר · דיווח שלך, לא אומת · נרשם דרך AI Botanist".
+- **Health tab**: the case ("דיווח שלך · לא אומת") with its treatments; resolved per plant by the user.
+- **"חולים"** (My Plants): plants marked sick OR with an open health case (`needsCarePlantIds`), derived from the cases — a seedling with mites stays a seedling; resolving the last open case removes it. A treatment never closes a case.
+- **Updates**: the card's "צפייה בצמחים שעודכנו" → `/updates/{card}`: every confirmed plant with its stored event, case and reminder as found on the device (not the chat text); Today lists recent bulk updates as one entry each.
+- **Today**: reminders of one card (`groupId`, or the same AI reminder text + time for older records) are ONE item with per-plant "בוצע" and "כולם בוצעו".
+- **AI context**: events and cases of the plant (internal ids stripped).
+
+## Incident 2026-10-18: "עודכנו 26 צמחים" but not visible
+Read-only production check: the card (status done, 26 of 28 targets confirmed, follow-up chosen) had committed all records — 26 `treatment_started` events dated 13.10 (inHistory), 26 diagnosis events, 26 open user-reported health cases, 26 active inspection reminders; success message stored with the last batch; no failures, no orphans. The success count was true. The gaps were read-side: the journal showed only `inJournal` events (treatments were stored with `false`), "חולים" filtered on `plant.status === "sick"` only, History titled it "התחלת טיפול" without the pest, no way from the card to the plants, and 26 separate reminders would have hit Today. Fixed on the read side, so the existing records show without rewriting production data; nothing was replayed. New records also carry `payload.actionId`, `inJournal: true` and `reminder.groupId`.
 
 ## Safety
 - Never a repeat pesticide application: the follow-up offered is an inspection reminder; a requested "לרסס שוב" reminder becomes "לבדוק … ולהחליט לפי התווית".

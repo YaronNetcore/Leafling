@@ -357,7 +357,7 @@ async function plantItems(p: ActionProposal, plant: Plant, openCases: { id: stri
   const items: Item[] = [];
   const ev = async (type: string, payload: Record<string, unknown>, extra: Record<string, unknown> = {}, n = "e") => {
     const id = await rid(p.id, plant.id, n);
-    items.push({ entity: "event", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, type, payload: { ...payload, via: "ai_chat" }, createdAt: at, occurredAt: p.occurredAt, precision: p.precision, source: "ai_confirmed", inJournal: false, inHistory: true, ...extra } });
+    items.push({ entity: "event", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, type, payload: { ...payload, via: "ai_chat", actionId: p.id }, createdAt: at, occurredAt: p.occurredAt, precision: p.precision, source: "ai_confirmed", inJournal: false, inHistory: true, ...extra } });
     return id;
   };
   if (p.action === "water") await ev("watering", {});
@@ -369,7 +369,7 @@ async function plantItems(p: ActionProposal, plant: Plant, openCases: { id: stri
     await ev("location_changed", { from: plant.locationId ?? null, to: p.details.toLocationId ?? null });
   } else if (p.action === "reminder") {
     const id = await rid(p.id, plant.id, "r");
-    items.push({ entity: "reminder", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, kind: p.details.reminderKind ?? "custom", text: p.details.reminderText ?? "", everyDays: null, nextAt: p.occurredAt, active: true, important: true, createdAt: at, source: "ai_confirmed" } });
+    items.push({ entity: "reminder", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, kind: p.details.reminderKind ?? "custom", text: p.details.reminderText ?? "", everyDays: null, nextAt: p.occurredAt, active: true, important: true, createdAt: at, source: "ai_confirmed", groupId: p.id } });
   } else if (p.action === "treatment") {
     let caseId: string | null = null;
     if (p.details.pest) {
@@ -379,13 +379,14 @@ async function plantItems(p: ActionProposal, plant: Plant, openCases: { id: stri
       else {
         caseId = await rid(p.id, plant.id, "hc");
         items.push({ entity: "health", id: caseId, mutationId: `act-${caseId}`, patch: { id: caseId, plantId: plant.id, title: p.details.pest, state: "active", source: "user", likelyCause: null, confidence: null, notes: "דווח בצ'אט על ידי המשתמשת — לא אומת באבחון.", openedAt: p.occurredAt, createdAt: at } });
-        await ev("diagnosis", { title: p.details.pest, source: "user", likelyCause: null, confidence: null, reportedBy: "user" }, {}, "dx");
+        await ev("diagnosis", { title: p.details.pest, source: "user", likelyCause: null, confidence: null, reportedBy: "user" }, { inJournal: true }, "dx");
       }
     }
-    await ev("treatment_started", { title: p.details.product ? `טיפול ב${p.details.product}` : "טיפול", product: p.details.product ?? null, productActive: p.details.productActive ?? null, pest: p.details.pest ?? null, healthCaseId: caseId, reportedBy: "user", verified: false });
+    // In history AND journal (one record); the health case stays open — a treatment is not a recovery.
+    await ev("treatment_started", { title: p.details.pest ? `טיפול נגד ${p.details.pest}` : p.details.product ? `טיפול ב${p.details.product}` : "טיפול", product: p.details.product ?? null, productActive: p.details.productActive ?? null, pest: p.details.pest ?? null, healthCaseId: caseId, reportedBy: "user", verified: false }, { inJournal: true });
     if (followUp && p.followUp) {
       const id = await rid(p.id, plant.id, "fu");
-      items.push({ entity: "reminder", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, kind: "inspect", text: p.followUp.text, everyDays: null, nextAt: p.followUp.dueAt, active: true, important: true, createdAt: at, source: "ai_confirmed" } });
+      items.push({ entity: "reminder", id, mutationId: `act-${id}`, patch: { id, plantId: plant.id, kind: "inspect", text: p.followUp.text, everyDays: null, nextAt: p.followUp.dueAt, active: true, important: true, createdAt: at, source: "ai_confirmed", groupId: p.id } });
     }
   }
   return items;

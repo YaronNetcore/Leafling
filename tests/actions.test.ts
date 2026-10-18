@@ -2,9 +2,11 @@
 // treatment safety. No model involved.
 import { describe, expect, it } from "vitest";
 import {
-  dueAtFor, matchLocations, matchPlants, occurredAtFor, proposalQuestion, resolveHebrewDate, safeReminderText, safeTz, samePest, pestInfo, treatmentSafety,
-  type PlantLite,
+  actionTitle, affectedPlants, dueAtFor, matchLocations, matchPlants, occurredAtFor, proposalQuestion, resolveHebrewDate, safeReminderText, safeTz, samePest, pestInfo, treatmentSafety,
+  type ActionProposal, type PlantLite,
 } from "../src/shared/actions.ts";
+import { healthEventText, inJournal, needsCarePlantIds, reminderGroupKey } from "../src/shared/domain.ts";
+import type { HealthCase, Plant, PlantEvent, Reminder } from "../src/shared/types.ts";
 import { sanitizeParsed } from "../src/worker/action-schema.ts";
 
 const TZ = "Asia/Jerusalem";
@@ -144,5 +146,56 @@ describe("model output is validated against an allowlist", () => {
   it("summary question", () => {
     const t = proposalQuestion({ action: "water", scopeLabel: "מצאתי 8 צמחים במרפסת", dateLabel: "היום · יום ראשון, 18.10.2026", details: {}, targets: Array.from({ length: 8 }, (_, i) => ({ plantId: `p${i}`, name: `צמח ${i}`, selected: true })) });
     expect(t).toBe("מצאתי 8 צמחים במרפסת. לשמור השקיה ל־8 הצמחים — היום?");
+  });
+});
+
+// Records exactly as the 2026-10-18 production card stored them (before actionId/groupId/inJournal were added).
+describe("read paths for treatment records — including the shape already in production", () => {
+  const P: ActionProposal = {
+    id: "card-1-a", revision: 1, status: "done", action: "treatment", scopeLabel: "", day: "2026-10-13", occurredAt: "2026-10-13T09:00:00.000Z", precision: "day",
+    dateLabel: "לפני 5 ימים · יום שלישי, 13.10.2026", tz: TZ, details: { pest: "אקריות", product: "קונפידור", productActive: "אימידקלופריד (imidacloprid)", reportedBy: "user" },
+    warnings: [], followUp: { days: 7, text: "בדיקה חוזרת לאקריות: גב העלים, קורים דקים ונקודות בהירות", dueAt: "2026-10-20T05:00:00.000Z" },
+    targets: [{ plantId: "x1", name: "א", selected: true }, { plantId: "x2", name: "ב", selected: true }, { plantId: "x3", name: "ג", selected: false }],
+    createdAt: "2026-10-18T06:20:00.000Z", confirmedIds: ["x1", "x2"], followUpChosen: true, results: { x1: "saved", x2: "saved" }, failures: [],
+  };
+  const plant = (id: string, status: Plant["status"] = "plant") => ({ id, commonName: id, scientificName: "", ordinal: 1, status, speciesId: null, createdAt: "2026-01-01T00:00:00.000Z" }) as Plant;
+  const legacyEvent = (plantId: string, n: number): PlantEvent => ({
+    id: `ev${n}`, plantId, type: "treatment_started", occurredAt: P.occurredAt, precision: "day", source: "ai_confirmed", inJournal: false, inHistory: true, createdAt: P.createdAt,
+    payload: { title: "טיפול בקונפידור", product: "קונפידור", productActive: "x", pest: "אקריות", healthCaseId: `hc${n}`, reportedBy: "user", verified: false, via: "ai_chat" },
+  });
+  const legacyCase = (plantId: string, n: number) => ({ id: `hc${n}`, plantId, title: "אקריות", state: "active", source: "user", openedAt: P.occurredAt, createdAt: P.createdAt }) as HealthCase;
+  const legacyReminder = (plantId: string, n: number) => ({ id: `r${n}`, plantId, kind: "inspect", text: P.followUp!.text, everyDays: null, nextAt: P.followUp!.dueAt, active: true, important: true, createdAt: P.createdAt, source: "ai_confirmed" }) as Reminder;
+
+  it("journal shows the treatment (same record as history); history/journal titles name the pest", () => {
+    const e = legacyEvent("x1", 1);
+    expect(inJournal(e)).toBe(true);
+    expect(inJournal({ type: "watering", inJournal: false })).toBe(false);
+    const t = healthEventText(e)!;
+    expect(t.title).toBe("טיפול נגד אקריות");
+    expect(t.detail).toContain("חומר: קונפידור");
+    expect(t.detail).toContain("דיווח שלך, לא אומת");
+    expect(t.detail).toContain("AI Botanist");
+    expect(healthEventText({ type: "diagnosis", payload: { title: "אקריות", source: "user", via: "ai_chat" } })!.title).toBe("דווח על בעיה: אקריות");
+  });
+  it("Sick plants: open user-reported case → listed (status kept); resolved → not listed", () => {
+    const plants = [plant("x1"), plant("x2", "seedling"), plant("x3")];
+    const cases = [legacyCase("x1", 1), legacyCase("x2", 2), { ...legacyCase("x3", 3), state: "resolved" as const }];
+    expect([...needsCarePlantIds(plants, cases)].sort()).toEqual(["x1", "x2"]);
+    expect([...needsCarePlantIds(plants, cases.map((c) => ({ ...c, state: "resolved" as const })))]).toEqual([]);
+    expect([...needsCarePlantIds([plant("s", "sick")], [])]).toEqual(["s"]);
+  });
+  it("'צפייה בצמחים שעודכנו' finds every stored record of the card, also without actionId/groupId", () => {
+    const rows = affectedPlants(P, [plant("x1"), plant("x2")], [legacyEvent("x1", 1), legacyEvent("x2", 2), { ...legacyEvent("x2", 9), occurredAt: "2026-09-01T09:00:00.000Z" }],
+      [legacyCase("x1", 1), legacyCase("x2", 2)], [legacyReminder("x1", 1), legacyReminder("x2", 2), { ...legacyReminder("x2", 7), text: "אחר" }]);
+    expect(rows.map((r) => r.plantId)).toEqual(["x1", "x2"]); // only confirmed plants, never x3
+    expect(rows.map((r) => r.event?.id)).toEqual(["ev1", "ev2"]);
+    expect(rows.map((r) => r.issue?.id)).toEqual(["hc1", "hc2"]);
+    expect(rows.map((r) => r.reminder?.id)).toEqual(["r1", "r2"]);
+    expect(actionTitle(P)).toBe("טיפול נגד אקריות");
+  });
+  it("Today groups the reminders of one card into one item; others stay separate", () => {
+    expect(reminderGroupKey(legacyReminder("x1", 1))).toBe(reminderGroupKey(legacyReminder("x2", 2)));
+    expect(reminderGroupKey({ ...legacyReminder("x1", 1), groupId: "g" })).toBe(reminderGroupKey({ ...legacyReminder("x2", 2), groupId: "g" }));
+    expect(reminderGroupKey({ ...legacyReminder("x1", 1), source: undefined })).not.toBe(reminderGroupKey({ ...legacyReminder("x2", 2), source: undefined }));
   });
 });
